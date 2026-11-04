@@ -1,36 +1,36 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 모아(MOA) 프론트엔드 모노레포
 
-## Getting Started
+코드 변경을 따라가는 IT 스타트업용 고객 문의 분류·답변 초안 서비스.
 
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+apps/
+  client/   고객 채팅 웹      http://localhost:3000  (/, /chat)
+  admin/    담당자 어드민     http://localhost:3001  (/, /inquiries/[id], /groups, /changes, /best-answers, /documents, /settings)
+packages/
+  shared/   @moa/shared  타입 · API 클라이언트 · 라벨 · 유틸 · 훅
+  ui/       @moa/ui      공통 UI 컴포넌트
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 실행
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+npm run dev          # client + admin 동시 실행
+npm run dev:client   # 고객 채팅만
+npm run dev:admin    # 어드민만
+npm run build | lint | typecheck
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## API
 
-## Learn More
+- 화면은 `packages/shared/src/api.ts` 만 통해 서버와 통신한다.
+- 백엔드 연동 전에는 `apps/admin` 의 mock API(`src/app/api/[...path]`, `src/server/`)를 쓰고,
+  client 는 `/api/*` 를 admin(:3001)으로 rewrite 해서 같은 상태를 공유한다.
+- 실제 백엔드 연동 시 `NEXT_PUBLIC_API_BASE_URL` 을 지정하고 mock 코드를 삭제한다.
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| 환경변수 | 기본값 | 설명 |
+|---|---|---|
+| `NEXT_PUBLIC_API_BASE_URL` | `/api` | 실제 백엔드 주소 |
+| `MOA_API_ORIGIN` | `http://localhost:3001` | client 가 mock API 로 rewrite 할 대상 |
+| `NEXT_PUBLIC_CLIENT_URL` | `http://localhost:3000` | 어드민 → 고객 채팅 링크 |
+| `NEXT_PUBLIC_ADMIN_URL` | `http://localhost:3001` | 클라이언트 → 어드민 링크 |

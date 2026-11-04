@@ -1,26 +1,21 @@
 {
-  "name": "moa-client",
-  "version": "0.1.0",
+  "name": "moa",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "packageManager": "npm@11.19.1",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
-  },
-  "dependencies": {
-    "next": "16.4.5",
-    "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "dev": "turbo run dev",
+    "dev:client": "turbo run dev --filter=@moa/client",
+    "dev:admin": "turbo run dev --filter=@moa/admin",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
-    "@tailwindcss/turbopack": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.4.5",
-    "tailwindcss": "^4",
+    "turbo": "^2.5.0",
     "typescript": "^5"
   }
 }
