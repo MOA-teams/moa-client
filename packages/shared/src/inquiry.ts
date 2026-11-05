@@ -548,6 +548,12 @@ export const VERIFICATION_CHECK_LABEL: Record<string, string> = {
 
 export const reviewReasonLabel = (code: string) => REVIEW_REASON_LABEL[code] ?? code;
 
+/** AI 분석 실패 코드 → 안내 문구 */
+export const ANALYSIS_ERROR_LABEL: Record<string, string> = {
+  AI_PIPELINE_FAILED: "AI가 이 문의를 처리하지 못했어요. 재분석을 요청하거나, 내용을 직접 확인해 답변해 주세요.",
+};
+export const analysisErrorLabel = (code: string) => ANALYSIS_ERROR_LABEL[code] ?? code;
+
 /* ---------------------------------- 오류 ---------------------------------- */
 
 export const INQUIRY_ERROR_MESSAGE: Record<string, string> = {

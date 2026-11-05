@@ -36,7 +36,9 @@ import {
   inquiryErrorMessage,
   newIdempotencyKey,
   reviewReasonLabel,
+  analysisErrorLabel,
   VERIFICATION_CHECK_LABEL,
+  type AnswerAudit,
   type AnswerBody,
   type BackendCategory,
   type BackendMessage,
@@ -99,8 +101,22 @@ const toErr = (e: unknown): Err => ({ msg: inquiryErrorMessage(e), rid: e instan
 
 /** 백엔드 실제 문의 상세 (GET /api/v1/admin/inquiries/{id}) */
 export function LiveInquiryDetail({ id }: { id: string }) {
-  const { messages, latest: d, error, poke } = useCursorMessages(id, (iid, cursor) => adminInquiryApi.detail(iid, cursor));
+  const { messages, latest, error, poke } = useCursorMessages(id, (iid, cursor) => adminInquiryApi.detail(iid, cursor));
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 백엔드는 해당 cursor 페이지에 포함된 답변만 `answers`로 내려준다.
+  // 새 메시지가 없는 poll 응답에서는 배열이 비므로, 받은 답변을 answer_id 기준으로 누적한다.
+  const [answerLog, setAnswerLog] = useState<{ id: string; src: Detail | null; list: AnswerAudit[] }>({ id, src: null, list: [] });
+  let answerList = answerLog.list;
+  if (answerLog.id !== id || answerLog.src !== latest) {
+    const base = answerLog.id === id ? answerLog.list : [];
+    const fresh = (latest?.answers ?? []).filter((a) => !base.some((b) => b.answer_id === a.answer_id));
+    answerList = fresh.length ? [...base, ...fresh] : base;
+    setAnswerLog({ id, src: latest, list: answerList });
+  }
+  const d = useMemo(() => (latest ? { ...latest, answers: answerList } : null), [latest, answerList]);
+  // 답변 감사 기록을 아직 못 받았더라도 대화에 최종 답변 메시지가 있으면 답변한 상담으로 본다
+  const hasFinalAnswerMessage = messages.some((m) => m.message_type === "최종 답변");
 
   // 담당자가 화면을 보고 있을 때 마지막 메시지까지 읽음 처리 → 고객 화면 '읽음'
   useReadReceipt(d ? id : null, messages.length ? messages[messages.length - 1].message_id : null, adminInquiryApi.read);
@@ -148,7 +164,7 @@ export function LiveInquiryDetail({ id }: { id: string }) {
         <div className="space-y-5">
           <AnalysisCard d={d} onChange={poke} />
           <ClassificationCard key={`${d.revision}-${d.category}-${d.urgency}`} d={d} onChange={poke} />
-          <AnswerCard d={d} onChange={poke} />
+          <AnswerCard d={d} hasFinalAnswerMessage={hasFinalAnswerMessage} onChange={poke} />
           {(d.status === "답변 완료" || closed) && <CloseCard d={d} onChange={poke} />}
         </div>
       </div>
@@ -310,8 +326,12 @@ function AnalysisCard({ d, onChange }: { d: Detail; onChange: () => void }) {
       <div className="space-y-3 px-5 py-4">
         {requested && running && <p className="text-[12.5px] text-indigo-700">재분석을 요청했어요. 완료되면 이 화면에 자동으로 반영돼요 (고객에게는 발송되지 않아요).</p>}
         {d.analysis_error && (
-          <Notice tone="danger" icon={<AlertCircle className="size-4" />} title="분석 실패">
-            {d.analysis_error}
+          <Notice tone="danger" icon={<AlertCircle className="size-4" />} title="AI 분석 실패">
+            {analysisErrorLabel(d.analysis_error)}
+            <p className="mt-1 font-mono text-[11px] opacity-60">
+              {d.analysis_error}
+              {d.latest_run_id && ` · ${d.latest_run_id}`}
+            </p>
           </Notice>
         )}
         {a ? (
@@ -421,9 +441,9 @@ function ClassificationCard({ d, onChange }: { d: Detail; onChange: () => void }
 
 /* --------------------------------- 답변 --------------------------------- */
 
-function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
+function AnswerCard({ d, hasFinalAnswerMessage, onChange }: { d: Detail; hasFinalAnswerMessage: boolean; onChange: () => void }) {
   const draft = d.draft;
-  const answered = (d.answers?.length ?? 0) > 0;
+  const answered = (d.answers?.length ?? 0) > 0 || hasFinalAnswerMessage;
   const closed = d.status === "상담 종료";
   // 우선순위: AI 초안 → AI 추천 질문 → 답변 틀(AI 분석이 끝났는데 둘 다 없을 때)
   const analysisDone = d.run_status === "완료" || d.run_status === "실패";
@@ -487,14 +507,17 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
       />
       <div className="space-y-3 px-5 py-4">
         {d.automatic_response && <AutoResponseBox r={d.automatic_response} />}
-        {answered && d.answers!.map((a) => <SentAnswer key={a.answer_id} a={a} />)}
+        {d.answers?.map((a) => <SentAnswer key={a.answer_id} a={a} />)}
+        {hasFinalAnswerMessage && !d.answers?.length && <p className="text-[13px] text-zinc-500">보낸 답변은 위 대화에서 확인할 수 있어요.</p>}
 
         {!answered && !closed && (
           <>
             {!draft && (
-              <Notice tone="info" title={d.draft_result ? `AI 판단: ${d.draft_result}` : "AI 초안이 아직 없어요"}>
+              <Notice tone={d.run_status === "실패" ? "warn" : "info"} title={d.run_status === "실패" ? "AI 초안 없음 (분석 실패)" : d.draft_result ? `AI 판단: ${d.draft_result}` : "AI 초안이 아직 없어요"}>
                 {d.run_status === "대기" || d.run_status === "처리 중"
                   ? "AI가 초안을 만드는 중이에요. 직접 작성할 수도 있어요."
+                  : d.run_status === "실패"
+                    ? "AI 분석이 실패해 초안이 없어요. 아래 답변 틀에 확인한 내용을 채워 직접 답변하세요."
                   : d.draft_result === "추가 질문 필요"
                     ? d.additional_question
                       ? "문의 내용이 부족해 AI가 고객에게 물어볼 질문을 준비했어요. 아래 내용을 확인·수정해서 보내세요."
