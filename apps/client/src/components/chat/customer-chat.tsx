@@ -488,7 +488,9 @@ export function CustomerChat() {
           <BotBubble>
             안녕하세요, {SERVICE}입니다 👋
             <br />
-            궁금한 점이나 불편한 점을 남겨주세요. 담당자가 확인 후 답변드려요.
+            궁금한 점이나 불편한 점을 남겨주세요.
+            <br />
+            AI가 먼저 답변드리고, 확인이 더 필요하면 담당자가 이어서 답변드려요.
           </BotBubble>
 
           {!inquiryId && ready && (
