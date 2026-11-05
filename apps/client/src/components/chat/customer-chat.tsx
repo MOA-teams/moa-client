@@ -1,67 +1,49 @@
 "use client";
 
-import {
-  AlertTriangle,
-  ArrowUp,
-  Check,
-  ChevronDown,
-  LogOut,
-  FileText,
-  Monitor,
-  Paperclip,
-  RotateCcw,
-  Sparkles,
-  X,
-} from "lucide-react";
-import { useRouter } from "next/navigation";
+import { AlertTriangle, ArrowUp, ChevronDown, FileText, Link2, LogOut, Monitor, Paperclip, RotateCcw, X } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, customerApi, type CustomerInquiry } from "@moa/shared/api";
-import { usePolling } from "@moa/shared/hooks";
+import { AuthApiError } from "@moa/shared/auth";
 import { useAuth } from "@moa/shared/auth-context";
-import { NotifyPrompt, useAnswerNotifier } from "./answer-notifier";
+import {
+  inquiryApi,
+  inquiryErrorMessage,
+  newIdempotencyKey,
+  toBackendCategory,
+  type AddMessageBody,
+  type AttachmentMeta,
+  type AttachmentWithUrl,
+  type BackendMessage,
+  type BackendStatus,
+  type CreateInquiryBody,
+  type InquiryEnv,
+} from "@moa/shared/inquiry";
+import { CATEGORIES, CATEGORY_LABEL } from "@moa/shared/labels";
+import type { Category, Message } from "@moa/shared/types";
 import { ADMIN_URL } from "@moa/shared/urls";
-import { CATEGORIES, CATEGORY_LABEL, STATUS_LABEL } from "@moa/shared/labels";
-import type { Attachment, Category, Environment, InquiryStatus, Message } from "@moa/shared/types";
 import { cn, formatBytes, formatTime } from "@moa/shared/utils";
+import { NotifyPrompt, useAnswerNotifier } from "./answer-notifier";
+import { initialEnv, loginHref, readEntry, type EntryInfo } from "./entry";
+import { useInquiryChat } from "./use-inquiry-chat";
 
-const STORAGE_BASE = "moa.chat.inquiryId";
+const SERVICE = "싱크노트";
+const STORAGE_BASE = "moa.chat.inquiry";
 const MAX_FILE = 10 * 1024 * 1024;
 const ACCEPT = ["image/png", "image/jpeg", "application/pdf"];
 
-function readStored(key: string) {
+function readStored(key: string): number | null {
   try {
-    return localStorage.getItem(key);
+    const v = Number(localStorage.getItem(key));
+    return Number.isSafeInteger(v) && v > 0 ? v : null;
   } catch {
     return null;
   }
 }
-function writeStored(key: string, id: string | null) {
+function writeStored(key: string, id: number | null) {
   try {
-    if (id) localStorage.setItem(key, id);
+    if (id) localStorage.setItem(key, String(id));
     else localStorage.removeItem(key);
   } catch {}
-}
-
-/** C-02: 웹은 발생 환경 자동 수집 */
-function detectEnv(): Environment {
-  const ua = navigator.userAgent;
-  const os = /Windows NT 10/.test(ua)
-    ? "Windows"
-    : /Mac OS X/.test(ua) && !/iPhone|iPad/.test(ua)
-      ? "macOS"
-      : /iPhone|iPad/.test(ua)
-        ? "iOS"
-        : /Android/.test(ua)
-          ? "Android"
-          : /Linux/.test(ua)
-            ? "Linux"
-            : "기타";
-  const m =
-    ua.match(/Edg\/(\d+)/) ? ["Edge", ua.match(/Edg\/(\d+)/)![1]] :
-    ua.match(/Chrome\/(\d+)/) ? ["Chrome", ua.match(/Chrome\/(\d+)/)![1]] :
-    ua.match(/Firefox\/(\d+)/) ? ["Firefox", ua.match(/Firefox\/(\d+)/)![1]] :
-    ua.match(/Version\/(\d+).*Safari/) ? ["Safari", ua.match(/Version\/(\d+).*Safari/)![1]] : ["브라우저", ""];
-  return { os, browser: `${m[0]} ${m[1]}`.trim() };
 }
 
 /** C-06: 민감정보(카드번호·주민번호) 마스킹 */
@@ -79,117 +61,157 @@ function maskSensitive(text: string) {
   return { out, masked };
 }
 
-const STEPS: InquiryStatus[] = ["received", "in_review", "answered", "closed"];
+/** 백엔드 메시지 → 화면·알림용 메시지 */
+function toMessage(m: BackendMessage): Message {
+  return {
+    id: String(m.message_id),
+    role: m.sender === "customer" ? "customer" : m.sender === "agent" ? "agent" : "ai",
+    kind: m.message_type === "acknowledgement" ? "receipt" : m.message_type === "information_request" ? "info_request" : "text",
+    text: m.text,
+    createdAt: m.sent_at,
+  };
+}
+
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+interface PendingFile {
+  local: string;
+  file: File;
+  att?: AttachmentWithUrl;
+  error?: string;
+}
 
 export function CustomerChat() {
   const { user, logout } = useAuth();
   const router = useRouter();
-  // 상담 기록은 로그인 사용자별로 분리
-  const storageKey = user ? `${STORAGE_BASE}:${user.user_id}` : STORAGE_BASE;
-  const customerName = user?.email.split("@")[0] ?? "고객";
-  const [inquiryId, setInquiryId] = useState<string | null>(null);
+  const params = useSearchParams();
+  // 진입 query는 첫 렌더 기준으로 고정 (성공 후 주소에서 제거해도 이번 상담에는 유지)
+  const [entry] = useState<EntryInfo>(() => readEntry(new URLSearchParams(params.toString())));
+  const storageKey = `${STORAGE_BASE}:${user?.user_id ?? "anon"}`;
+
+  const [inquiryId, setInquiryId] = useState<number | null>(null);
   const [ready, setReady] = useState(false);
   const [category, setCategory] = useState<Category | null>(null);
-  const [env, setEnv] = useState<Environment>({});
+  const [env, setEnv] = useState<InquiryEnv>({ os: null, app_version: null, error_code: null });
   const [envOpen, setEnvOpen] = useState(false);
   const [text, setText] = useState("");
-  const [files, setFiles] = useState<Array<{ local: string; att?: Attachment; file: File; error?: string }>>([]);
+  const [files, setFiles] = useState<PendingFile[]>([]);
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ msg: string; rid?: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // 실패한 요청의 키·본문 보관 → 같은 내용 재시도는 같은 Idempotency-Key
+  const pendingCreate = useRef<{ key: string; body: CreateInquiryBody } | null>(null);
+  const pendingMessage = useRef<{ key: string; inquiryId: number; body: AddMessageBody } | null>(null);
 
   useEffect(() => {
-    // 창을 닫아도 대화 유지 (4-5)
-    setInquiryId(readStored(storageKey));
-    setEnv(detectEnv());
+    // 외부(싱크노트)에서 진입 정보와 함께 들어오면 기존 상담에 이어 보내지 않고 새 문의 흐름
+    // query 없는 일반 재접속은 기존 상담 복원
+     
+    setInquiryId(entry.hasEntry ? null : readStored(storageKey));
+    setEnv(initialEnv(entry));
     setReady(true);
-  }, [storageKey]);
+  }, [entry, storageKey]);
 
-  const { data: inquiry, setData, error: loadError } = usePolling<CustomerInquiry | null>(
-    () => (inquiryId ? customerApi.get(inquiryId) : Promise.resolve(null)),
-    3000,
-    ready && !!inquiryId,
-    { whenHidden: true },
-  );
+  const chat = useInquiryChat(inquiryId);
+  const messages = useMemo(() => chat.messages.map(toMessage), [chat.messages]);
+  const rawById = useMemo(() => new Map(chat.messages.map((m) => [String(m.message_id), m])), [chat.messages]);
+  useAnswerNotifier(inquiryId ? String(inquiryId) : null, messages);
 
-  const lastCount = useRef(0);
-  const messages = useMemo(() => inquiry?.messages ?? [], [inquiry]);
-  useAnswerNotifier(inquiryId, messages);
   useEffect(() => {
-    if (messages.length !== lastCount.current) {
-      lastCount.current = messages.length;
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-    }
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages.length]);
 
+  // 저장된 상담이 없어졌거나 내 것이 아니면(404) 새 상담으로
   useEffect(() => {
-    if (loadError && inquiryId) {
-      // 데모 초기화 등으로 문의가 사라진 경우
+    if (chat.error?.code === "INQUIRY_NOT_FOUND" && inquiryId) {
       writeStored(storageKey, null);
+       
       setInquiryId(null);
     }
-  }, [loadError, inquiryId, storageKey]);
+  }, [chat.error, inquiryId, storageKey]);
 
   async function addFiles(list: FileList | null) {
     if (!list) return;
-    const next = Array.from(list).map((file) => {
-      const error = !ACCEPT.includes(file.type)
-        ? "png·jpg·pdf만 가능해요"
-        : file.size > MAX_FILE
-          ? "파일당 10MB까지 가능해요"
-          : undefined;
-      return { file, local: URL.createObjectURL(file), error };
-    });
-    setFiles((f) => [...f, ...next]);
+    const next: PendingFile[] = Array.from(list).map((file) => ({
+      file,
+      local: URL.createObjectURL(file),
+      error: !ACCEPT.includes(file.type) ? "png·jpg·pdf만 가능해요" : file.size > MAX_FILE ? "파일당 10MB까지 가능해요" : undefined,
+    }));
+    setFiles((f) => [...f, ...next].slice(0, 10));
     if (next.some((n) => n.file.type.startsWith("image/") && !n.error)) {
       setNotice("이미지에 카드번호·이메일 같은 개인정보가 보이지 않게 가려주세요.");
     }
     for (const n of next) {
       if (n.error) continue;
       try {
-        const att = await customerApi.upload(n.file);
+        const att = await inquiryApi.upload(n.file);
         setFiles((f) => f.map((x) => (x.local === n.local ? { ...x, att } : x)));
       } catch (e) {
-        setFiles((f) => f.map((x) => (x.local === n.local ? { ...x, error: e instanceof Error ? e.message : "업로드 실패" } : x)));
+        setFiles((f) => f.map((x) => (x.local === n.local ? { ...x, error: inquiryErrorMessage(e) } : x)));
       }
     }
   }
 
+  async function createInquiry(message: string, attachments: number[]) {
+    const body: CreateInquiryBody = {
+      message,
+      env: { ...env },
+      attachments,
+      ...(entry.cid ? { source_customer_id: entry.cid } : {}),
+      ...(toBackendCategory(category) ? { customer_category: toBackendCategory(category) } : {}),
+    };
+    const prev = pendingCreate.current;
+    const key = prev && same(prev.body, body) ? prev.key : newIdempotencyKey();
+    pendingCreate.current = { key, body };
+    const r = await inquiryApi.create(body, key);
+    pendingCreate.current = null;
+    writeStored(storageKey, r.inquiry_id);
+    setInquiryId(r.inquiry_id);
+    // 생성 성공 후 진입 query 제거 (실패 시에는 유지)
+    if (params.toString()) router.replace("/chat", { scroll: false });
+  }
+
+  async function addMessage(id: number, body: AddMessageBody) {
+    const prev = pendingMessage.current;
+    const key = prev && prev.inquiryId === id && same(prev.body, body) ? prev.key : newIdempotencyKey();
+    pendingMessage.current = { key, inquiryId: id, body };
+    await inquiryApi.addMessage(id, body, key);
+    pendingMessage.current = null;
+    chat.poke();
+  }
+
   async function send() {
-    const uploading = files.some((f) => !f.att && !f.error);
-    if (uploading || sending) return;
-    const atts = files.filter((f) => f.att).map((f) => f.att!);
-    if (!text.trim() && atts.length === 0) return;
-    const { out, masked } = maskSensitive(text.trim());
+    if (sending || files.some((f) => !f.att && !f.error)) return;
+    const attachments = files.filter((f) => f.att).map((f) => f.att!.attachment_id);
+    if (!text.trim()) {
+      if (attachments.length) setError({ msg: "첨부와 함께 보낼 메시지를 입력해 주세요." });
+      return;
+    }
+    const { out, masked } = maskSensitive(text);
     if (masked) setNotice("카드번호·주민번호로 보이는 내용을 가려서 보냈어요.");
     setSending(true);
     setError(null);
     try {
-      if (!inquiryId) {
-        const created = await customerApi.start({
-          customerName,
-          customerCategory: category,
-          text: out,
-          environment: env,
-          attachments: atts,
-        });
-        writeStored(storageKey, created.id);
-        setInquiryId(created.id);
-        setData(created);
+      if (!inquiryId || chat.status === "closed") {
+        await createInquiry(out, attachments);
       } else {
-        const r = await customerApi.send(inquiryId, { text: out, attachments: atts, environment: env });
-        if (r.newInquiry) {
-          writeStored(storageKey, r.inquiry.id);
-          setInquiryId(r.inquiry.id);
+        try {
+          await addMessage(inquiryId, { text: out, attachments });
+        } catch (e) {
+          // 종료됐거나 사라진 상담 → 새 문의로 접수
+          if (e instanceof AuthApiError && (e.code === "INQUIRY_CLOSED" || e.code === "INQUIRY_NOT_FOUND")) {
+            pendingMessage.current = null;
+            await createInquiry(out, attachments);
+          } else throw e;
         }
-        setData(r.inquiry);
       }
       setText("");
       setFiles([]);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "전송하지 못했어요. 다시 시도해 주세요.");
+      // 실패 시 입력·첨부·진입 정보·요청 키를 그대로 유지 → 다시 보내기
+      setError({ msg: inquiryErrorMessage(e), rid: e instanceof AuthApiError ? e.requestId : undefined });
     } finally {
       setSending(false);
     }
@@ -197,16 +219,19 @@ export function CustomerChat() {
 
   function newChat() {
     writeStored(storageKey, null);
+    pendingCreate.current = null;
+    pendingMessage.current = null;
     setInquiryId(null);
-    setData(null);
     setCategory(null);
     setText("");
     setFiles([]);
     setNotice(null);
+    setError(null);
   }
 
-  const status = inquiry?.status;
+  const status = chat.status;
   const closed = status === "closed";
+  const uploading = files.some((f) => !f.att && !f.error);
 
   return (
     <div className="flex min-h-dvh items-center justify-center bg-[radial-gradient(ellipse_at_top,#eef2ff,transparent_60%)] p-0 sm:p-6">
@@ -215,10 +240,10 @@ export function CustomerChat() {
         <header className="border-b border-zinc-100 px-5 pb-3 pt-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <span className="grid size-9 place-items-center rounded-full bg-indigo-600 text-[13px] font-bold text-white">F</span>
+              <Avatar size="md" />
               <div>
-                <p className="text-[15px] font-semibold text-zinc-900">플로노트 고객센터</p>
-                <p className="text-[12px] text-zinc-500">평일 10:00 ~ 19:00 · 평균 응답 12분</p>
+                <p className="text-[15px] font-semibold text-zinc-900">{SERVICE} 고객센터</p>
+                <p className="text-[12px] text-zinc-500">평일 10:00 ~ 19:00 · 담당자 확인 후 답변</p>
               </div>
             </div>
             <div className="flex items-center gap-0.5">
@@ -230,7 +255,7 @@ export function CustomerChat() {
               <button
                 onClick={() => {
                   logout();
-                  router.replace("/login?next=/chat");
+                  router.replace(loginHref("/login", "/chat"));
                 }}
                 className="grid size-7 place-items-center rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
                 title={user ? `${user.email} 로그아웃` : "로그아웃"}
@@ -242,12 +267,14 @@ export function CustomerChat() {
           </div>
           {status && <StatusBar status={status} />}
         </header>
-        <NotifyPrompt show={!!inquiryId && status !== "closed"} />
+        <NotifyPrompt show={!!inquiryId && !closed} />
 
         {/* 메시지 */}
         <div ref={scrollRef} className="scrollbar-thin flex-1 space-y-3 overflow-y-auto bg-zinc-50/50 px-4 py-5">
+          {entry.hasEntry && <EntryCard entry={entry} />}
+
           <BotBubble>
-            안녕하세요, 플로노트입니다 👋
+            안녕하세요, {SERVICE}입니다 👋
             <br />
             궁금한 점이나 불편한 점을 남겨주세요. 담당자가 확인 후 답변드려요.
           </BotBubble>
@@ -262,9 +289,7 @@ export function CustomerChat() {
                     onClick={() => setCategory(category === c ? null : c)}
                     className={cn(
                       "rounded-full border px-3 py-1.5 text-[13px] transition",
-                      category === c
-                        ? "border-indigo-600 bg-indigo-600 text-white"
-                        : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300",
+                      category === c ? "border-indigo-600 bg-indigo-600 text-white" : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300",
                     )}
                   >
                     {CATEGORY_LABEL[c]}
@@ -275,14 +300,13 @@ export function CustomerChat() {
           )}
 
           {messages.map((m) => (
-            <MessageItem key={m.id} m={m} inquiry={inquiry!} onRated={setData} />
+            <MessageItem key={m.id} m={m} attachments={rawById.get(m.id)?.attachments ?? []} />
           ))}
 
-          {closed && (
-            <p className="py-2 text-center text-[12px] text-zinc-400">
-              상담이 종료되었어요. 새 메시지를 보내면 새 문의로 접수됩니다.
-            </p>
+          {chat.error && chat.error.code !== "INQUIRY_NOT_FOUND" && (
+            <p className="text-center text-[12px] text-zinc-400">대화를 불러오는 중 문제가 생겼어요. 잠시 후 자동으로 다시 시도해요.</p>
           )}
+          {closed && <p className="py-2 text-center text-[12px] text-zinc-400">상담이 종료되었어요. 새 메시지를 보내면 새 문의로 접수됩니다.</p>}
         </div>
 
         {/* 입력 */}
@@ -296,28 +320,40 @@ export function CustomerChat() {
               </button>
             </div>
           )}
-          {error && <p className="mb-2 px-1 text-[12px] text-red-600">{error}</p>}
-
-          <div className="mb-2">
-            <button
-              onClick={() => setEnvOpen((v) => !v)}
-              className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-[12px] text-zinc-500 hover:text-zinc-700"
-            >
-              <Monitor className="size-3.5" />
-              <span className="truncate">
-                {env.os ?? "환경"} · {env.browser ?? "-"} 자동 수집
-                {env.errorCode ? ` · ${env.errorCode}` : ""}
+          {error && (
+            <div className="mb-2 flex items-center gap-2 px-1 text-[12px] text-red-600">
+              <span className="flex-1">
+                {error.msg}
+                {error.rid && <span className="ml-1 font-mono text-[10px] text-red-300">{error.rid}</span>}
               </span>
-              <ChevronDown className={cn("ml-auto size-3.5 transition", envOpen && "rotate-180")} />
-            </button>
-            {envOpen && (
-              <div className="mt-1 grid grid-cols-3 gap-1.5 px-1">
-                <EnvInput label="OS" value={env.os} onChange={(v) => setEnv({ ...env, os: v })} />
-                <EnvInput label="브라우저·앱 버전" value={env.browser} onChange={(v) => setEnv({ ...env, browser: v })} />
-                <EnvInput label="오류 코드" placeholder="E-502" value={env.errorCode} onChange={(v) => setEnv({ ...env, errorCode: v.toUpperCase() || undefined })} />
-              </div>
-            )}
-          </div>
+              <button onClick={send} disabled={sending} className="shrink-0 font-medium underline underline-offset-2">
+                다시 보내기
+              </button>
+            </div>
+          )}
+
+          {!inquiryId && (
+            <div className="mb-2">
+              <button
+                onClick={() => setEnvOpen((v) => !v)}
+                className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-[12px] text-zinc-500 hover:text-zinc-700"
+              >
+                <Monitor className="size-3.5" />
+                <span className="truncate">
+                  {[env.os, env.app_version && `v${env.app_version}`, env.error_code].filter(Boolean).join(" · ") || "발생 환경"}
+                  {entry.hasEntry ? " · 앱에서 전달" : " · 자동 수집"}
+                </span>
+                <ChevronDown className={cn("ml-auto size-3.5 transition", envOpen && "rotate-180")} />
+              </button>
+              {envOpen && (
+                <div className="mt-1 grid grid-cols-3 gap-1.5 px-1">
+                  <EnvInput label="OS" value={env.os} max={200} onChange={(v) => setEnv({ ...env, os: v || null })} />
+                  <EnvInput label="앱 버전" value={env.app_version} max={100} onChange={(v) => setEnv({ ...env, app_version: v || null })} />
+                  <EnvInput label="오류 코드" placeholder="E-502" value={env.error_code} max={100} onChange={(v) => setEnv({ ...env, error_code: v.toUpperCase() || null })} />
+                </div>
+              )}
+            </div>
+          )}
 
           {files.length > 0 && (
             <div className="mb-2 flex gap-2 overflow-x-auto px-1 pb-1">
@@ -332,7 +368,7 @@ export function CustomerChat() {
                       PDF
                     </div>
                   )}
-                  <span className="absolute inset-x-0 bottom-0 truncate rounded-b-lg bg-black/55 px-1 text-[9.5px] text-white">
+                  <span className="absolute inset-x-0 bottom-0 truncate rounded-b-lg bg-black/55 px-1 text-[9.5px] text-white" title={f.error}>
                     {f.error ? f.error : f.att ? formatBytes(f.file.size) : "업로드 중…"}
                   </span>
                   <button
@@ -361,9 +397,10 @@ export function CustomerChat() {
             />
             <button
               onClick={() => fileRef.current?.click()}
-              className="grid size-9 shrink-0 place-items-center rounded-xl text-zinc-500 hover:bg-zinc-100"
+              disabled={files.length >= 10}
+              className="grid size-9 shrink-0 place-items-center rounded-xl text-zinc-500 hover:bg-zinc-100 disabled:text-zinc-300"
               aria-label="파일 첨부"
-              title="이미지·PDF 첨부 (파일당 10MB)"
+              title="이미지·PDF 첨부 (파일당 10MB, 최대 10개)"
             >
               <Paperclip className="size-[18px]" />
             </button>
@@ -377,12 +414,13 @@ export function CustomerChat() {
                 }
               }}
               rows={1}
+              maxLength={10000}
               placeholder={closed ? "새 문의를 남겨주세요" : "메시지를 입력하세요"}
               className="max-h-32 min-h-9 flex-1 resize-none bg-transparent py-2 text-[14px] outline-none placeholder:text-zinc-400"
             />
             <button
               onClick={send}
-              disabled={sending || (!text.trim() && !files.some((f) => f.att)) || files.some((f) => !f.att && !f.error)}
+              disabled={sending || !text.trim() || uploading}
               className="grid size-9 shrink-0 place-items-center rounded-xl bg-indigo-600 text-white transition hover:bg-indigo-500 disabled:bg-zinc-200 disabled:text-zinc-400"
               aria-label="보내기"
             >
@@ -390,7 +428,10 @@ export function CustomerChat() {
             </button>
           </div>
           <p className="mt-2 text-center text-[11px] text-zinc-400">
-            데모 화면 · <a href={ADMIN_URL} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">담당자 어드민 열기</a>
+            데모 화면 ·{" "}
+            <a href={ADMIN_URL} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+              담당자 어드민 열기
+            </a>
           </p>
         </div>
       </div>
@@ -398,24 +439,28 @@ export function CustomerChat() {
   );
 }
 
-function StatusBar({ status }: { status: InquiryStatus }) {
-  const idx = status === "need_info" ? 1 : STEPS.indexOf(status);
+/* --------------------------------- 하위 컴포넌트 --------------------------------- */
+
+const STEPS: Array<{ key: BackendStatus; label: string }> = [
+  { key: "received", label: "접수" },
+  { key: "in_review", label: "담당자 확인 중" },
+  { key: "answered", label: "답변 완료" },
+  { key: "closed", label: "상담 종료" },
+];
+
+function StatusBar({ status }: { status: BackendStatus }) {
+  const needs = status === "needs_info";
+  const idx = needs ? 1 : STEPS.findIndex((s) => s.key === status);
   return (
     <div className="mt-3 flex items-center gap-1.5">
       {STEPS.map((s, i) => {
-        const label = s === "in_review" && status === "need_info" ? STATUS_LABEL.need_info : STATUS_LABEL[s];
         const active = i === idx;
         const done = i < idx;
         return (
-          <div key={s} className="flex flex-1 flex-col gap-1">
-            <div
-              className={cn(
-                "h-1 rounded-full",
-                done ? "bg-indigo-600" : active ? (status === "need_info" ? "bg-amber-500" : "bg-indigo-600") : "bg-zinc-200",
-              )}
-            />
-            <span className={cn("text-[11px]", active ? (status === "need_info" ? "font-semibold text-amber-600" : "font-semibold text-indigo-700") : done ? "text-zinc-500" : "text-zinc-400")}>
-              {label}
+          <div key={s.key} className="flex flex-1 flex-col gap-1">
+            <div className={cn("h-1 rounded-full", done ? "bg-indigo-600" : active ? (needs ? "bg-amber-500" : "bg-indigo-600") : "bg-zinc-200")} />
+            <span className={cn("text-[11px]", active ? (needs ? "font-semibold text-amber-600" : "font-semibold text-indigo-700") : done ? "text-zinc-500" : "text-zinc-400")}>
+              {needs && i === 1 ? "추가 정보 필요" : s.label}
             </span>
           </div>
         );
@@ -424,14 +469,50 @@ function StatusBar({ status }: { status: InquiryStatus }) {
   );
 }
 
-function EnvInput({ label, value, onChange, placeholder }: { label: string; value?: string; onChange: (v: string) => void; placeholder?: string }) {
+/** 싱크노트 앱에서 넘어온 진입 정보 */
+function EntryCard({ entry }: { entry: EntryInfo }) {
+  const chips = [entry.os, entry.appVersion && `앱 ${entry.appVersion}`].filter(Boolean) as string[];
+  return (
+    <div className="animate-fade-up rounded-2xl border border-indigo-100 bg-indigo-50/60 px-3.5 py-3">
+      <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-indigo-900">
+        <Link2 className="size-3.5" /> {SERVICE}에서 연결됨
+      </p>
+      {chips.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {chips.map((c) => (
+            <span key={c} className="rounded-md bg-white px-1.5 py-0.5 text-[11px] text-indigo-800 ring-1 ring-indigo-100">
+              {c}
+            </span>
+          ))}
+        </div>
+      )}
+      {entry.errorCode && (
+        <p className="mt-2 text-[12.5px] text-indigo-900">
+          <span className="rounded bg-red-100 px-1 py-px font-mono text-[11.5px] font-semibold text-red-700">{entry.errorCode}</span> 오류 정보가 함께
+          전달돼요
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Avatar({ size = "sm" }: { size?: "sm" | "md" }) {
+  return (
+    <span className={cn("grid shrink-0 place-items-center rounded-full bg-indigo-600 font-bold text-white", size === "md" ? "size-9 text-[13px]" : "mt-0.5 size-8 text-[11px]")}>
+      S
+    </span>
+  );
+}
+
+function EnvInput({ label, value, onChange, placeholder, max }: { label: string; value: string | null; onChange: (v: string) => void; placeholder?: string; max: number }) {
   return (
     <label className="flex flex-col gap-0.5">
       <span className="text-[10.5px] text-zinc-400">{label}</span>
       <input
         value={value ?? ""}
         placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
+        maxLength={max}
+        onChange={(e) => onChange(e.target.value.trim())}
         className="h-7 rounded-md border border-zinc-200 px-2 text-[12px] outline-none focus:border-zinc-400"
       />
     </label>
@@ -441,156 +522,80 @@ function EnvInput({ label, value, onChange, placeholder }: { label: string; valu
 function BotBubble({ children, label, time }: { children: React.ReactNode; label?: string; time?: string }) {
   return (
     <div className="flex animate-fade-up gap-2">
-      <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full bg-indigo-600 text-[11px] font-bold text-white">F</span>
+      <Avatar />
       <div className="max-w-[80%]">
         {label && <p className="mb-1 text-[11px] text-zinc-500">{label}</p>}
-        <div className="whitespace-pre-line rounded-2xl rounded-tl-md bg-white px-3.5 py-2.5 text-[14px] leading-relaxed text-zinc-800 ring-1 ring-zinc-200/70">
-          {children}
-        </div>
+        <div className="whitespace-pre-line rounded-2xl rounded-tl-md bg-white px-3.5 py-2.5 text-[14px] leading-relaxed text-zinc-800 ring-1 ring-zinc-200/70">{children}</div>
         {time && <p className="mt-1 text-[10.5px] text-zinc-400">{time}</p>}
       </div>
     </div>
   );
 }
 
-function AttachmentList({ items, dark }: { items: Attachment[]; dark?: boolean }) {
+/** 첨부: 메타데이터만 받으므로 표시·다운로드 직전에 presigned URL 발급 */
+function RemoteAttachment({ a }: { a: AttachmentMeta }) {
+  const isImage = a.mime.startsWith("image/");
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!isImage) return;
+    let alive = true;
+    inquiryApi
+      .attachment(a.attachment_id)
+      .then((r) => alive && setUrl(r.url))
+      .catch(() => alive && setFailed(true));
+    return () => {
+      alive = false;
+    };
+  }, [a.attachment_id, isImage]);
+
+  async function open() {
+    try {
+      const r = await inquiryApi.attachment(a.attachment_id); // 만료됐을 수 있어 매번 새로 발급
+      window.open(r.url, "_blank", "noopener,noreferrer");
+    } catch {
+      setFailed(true);
+    }
+  }
+
+  if (isImage && url && !failed) {
+    return (
+      <button onClick={open} className="block">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt={a.file_name} onError={() => setFailed(true)} className="max-h-40 max-w-[220px] rounded-xl border border-zinc-200 object-cover" />
+      </button>
+    );
+  }
   return (
-    <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
-      {items.map((a) =>
-        a.mime.startsWith("image/") ? (
-          <a key={a.id} href={a.url} target="_blank" rel="noreferrer">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={a.url} alt={a.name} className="max-h-40 max-w-[220px] rounded-xl border border-zinc-200 object-cover" />
-          </a>
-        ) : (
-          <a
-            key={a.id}
-            href={a.url}
-            target="_blank"
-            rel="noreferrer"
-            className={cn("flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px]", dark ? "border-zinc-200 bg-white text-zinc-700" : "border-zinc-200")}
-          >
-            <FileText className="size-4 text-red-500" />
-            <span className="max-w-[160px] truncate">{a.name}</span>
-            <span className="text-zinc-400">{formatBytes(a.size)}</span>
-          </a>
-        ),
-      )}
-    </div>
+    <button onClick={open} className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[12px] text-zinc-700">
+      <FileText className={cn("size-4", isImage ? "text-indigo-500" : "text-red-500")} />
+      <span className="max-w-[160px] truncate">{a.file_name}</span>
+      <span className="text-zinc-400">{failed ? "다시 열기" : formatBytes(a.size)}</span>
+    </button>
   );
 }
 
-function MessageItem({ m, inquiry, onRated }: { m: Message; inquiry: CustomerInquiry; onRated: (i: CustomerInquiry) => void }) {
+function MessageItem({ m, attachments }: { m: Message; attachments: AttachmentMeta[] }) {
   const time = formatTime(m.createdAt);
   if (m.role === "customer") {
     return (
       <div className="flex animate-fade-up flex-col items-end">
-        {m.text && (
-          <div className="max-w-[80%] whitespace-pre-line rounded-2xl rounded-tr-md bg-zinc-900 px-3.5 py-2.5 text-[14px] leading-relaxed text-white">
-            {m.text}
+        {m.text && <div className="max-w-[80%] whitespace-pre-line rounded-2xl rounded-tr-md bg-zinc-900 px-3.5 py-2.5 text-[14px] leading-relaxed text-white">{m.text}</div>}
+        {attachments.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
+            {attachments.map((a) => (
+              <RemoteAttachment key={a.attachment_id} a={a} />
+            ))}
           </div>
         )}
-        {m.attachments && m.attachments.length > 0 && <AttachmentList items={m.attachments} dark />}
         <p className="mt-1 text-[10.5px] text-zinc-400">{time}</p>
       </div>
     );
   }
-  if (m.kind === "rating_request") {
-    return <RatingCard inquiry={inquiry} onRated={onRated} />;
-  }
-  if (m.role === "ai") {
-    return (
-      <BotBubble label={m.kind === "info_request" ? "자동 안내 · 정보 요청" : "자동 안내"} time={time}>
-        {m.text}
-      </BotBubble>
-    );
-  }
   return (
-    <BotBubble label="상담원" time={time}>
+    <BotBubble label={m.role === "ai" ? (m.kind === "info_request" ? "자동 안내 · 정보 요청" : "자동 안내") : "상담원"} time={time}>
       {m.text}
     </BotBubble>
-  );
-}
-
-/** C-04: 한 번의 탭으로 끝나는 별점 + 선택 한 줄 의견 */
-function RatingCard({ inquiry, onRated }: { inquiry: CustomerInquiry; onRated: (i: CustomerInquiry) => void }) {
-  const score = inquiry.rating?.score ?? null;
-  const [hover, setHover] = useState(0);
-  const [comment, setComment] = useState("");
-  const [commentSent, setCommentSent] = useState(!!inquiry.rating?.comment);
-  const [busy, setBusy] = useState(false);
-
-  async function rate(s: number) {
-    if (busy) return;
-    setBusy(true);
-    try {
-      onRated(await customerApi.rate(inquiry.id, s));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function sendComment() {
-    if (!comment.trim() || score === null) return;
-    setBusy(true);
-    try {
-      onRated(await customerApi.rate(inquiry.id, score, comment.trim()));
-      setCommentSent(true);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="mx-auto w-full max-w-[320px] animate-fade-up rounded-2xl border border-zinc-200 bg-white p-4 text-center shadow-sm">
-      {score === null ? (
-        <>
-          <p className="text-[14px] font-semibold text-zinc-900">상담은 만족스러우셨나요?</p>
-          <p className="mt-0.5 text-[12px] text-zinc-500">별을 누르면 바로 평가가 끝나요</p>
-          <div className="mt-3 flex justify-center gap-1" onMouseLeave={() => setHover(0)}>
-            {[1, 2, 3, 4, 5].map((s) => (
-              <button
-                key={s}
-                onMouseEnter={() => setHover(s)}
-                onClick={() => rate(s)}
-                disabled={busy}
-                className={cn("text-[30px] leading-none transition-transform hover:scale-110", s <= hover ? "text-amber-400" : "text-zinc-200")}
-                aria-label={`${s}점`}
-              >
-                ★
-              </button>
-            ))}
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="mx-auto mb-2 grid size-9 place-items-center rounded-full bg-emerald-50 text-emerald-600">
-            <Check className="size-5" />
-          </div>
-          <p className="text-[14px] font-semibold text-zinc-900">평가해 주셔서 감사합니다</p>
-          <p className="mt-1 text-[20px] leading-none text-amber-400">
-            {"★".repeat(score)}
-            <span className="text-zinc-200">{"★".repeat(5 - score)}</span>
-          </p>
-          {commentSent ? (
-            <p className="mt-3 text-[12px] text-zinc-500">의견도 잘 전달했어요.</p>
-          ) : (
-            <div className="mt-3 flex gap-1.5">
-              <input
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                placeholder="한 줄 의견 (선택)"
-                className="h-8 flex-1 rounded-lg border border-zinc-200 px-2.5 text-[12.5px] outline-none focus:border-zinc-400"
-              />
-              <button onClick={sendComment} disabled={!comment.trim() || busy} className="h-8 rounded-lg bg-zinc-900 px-3 text-[12px] font-medium text-white disabled:bg-zinc-200 disabled:text-zinc-400">
-                보내기
-              </button>
-            </div>
-          )}
-        </>
-      )}
-      <p className="mt-3 flex items-center justify-center gap-1 text-[10.5px] text-zinc-400">
-        <Sparkles className="size-3" /> 평가는 더 나은 답변을 만드는 데 쓰여요
-      </p>
-    </div>
   );
 }

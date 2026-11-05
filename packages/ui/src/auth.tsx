@@ -116,13 +116,24 @@ export function FormAlert({ message, requestId }: { message: string | null; requ
   );
 }
 
-export function SubmitButton({ loading, children, className }: { loading?: boolean; children: ReactNode; className?: string }) {
+export function SubmitButton({
+  loading,
+  children,
+  className,
+  tone = "dark",
+}: {
+  loading?: boolean;
+  children: ReactNode;
+  className?: string;
+  tone?: "dark" | "indigo";
+}) {
   return (
     <button
       type="submit"
       disabled={loading}
       className={cn(
-        "flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-zinc-900 text-[15px] font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400",
+        "flex h-11 w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold text-white transition disabled:cursor-not-allowed",
+        tone === "indigo" ? "bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-300" : "bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-400",
         className,
       )}
     >

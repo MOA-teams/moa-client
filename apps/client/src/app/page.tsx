@@ -158,7 +158,7 @@ export default function Home() {
 
       <footer className="border-t border-zinc-100">
         <div className="mx-auto max-w-6xl px-6 py-6 text-[12.5px] text-zinc-400">
-          해커톤 데모 · 가상 스타트업 &ldquo;플로노트&rdquo;의 합성 데이터를 사용합니다.
+          해커톤 데모 · 가상 스타트업 &ldquo;싱크노트&rdquo;의 합성 데이터를 사용합니다.
         </div>
       </footer>
     </div>

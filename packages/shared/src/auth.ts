@@ -79,7 +79,16 @@ const FALLBACK: Record<number, string> = {
   409: "이미 존재하거나 충돌하는 요청이에요.",
 };
 
-async function raw<T>(path: string, init: { method?: string; body?: unknown; token?: string } = {}): Promise<T> {
+export interface RequestInit2 {
+  method?: string;
+  /** JSON 본문 */
+  body?: unknown;
+  /** multipart 본문 (Content-Type은 브라우저가 지정) */
+  form?: FormData;
+  headers?: Record<string, string>;
+}
+
+async function raw<T>(path: string, init: RequestInit2 & { token?: string } = {}): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -89,8 +98,9 @@ async function raw<T>(path: string, init: { method?: string; body?: unknown; tok
         Accept: "application/json",
         ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
         ...(init.token ? { Authorization: `Bearer ${init.token}` } : {}),
+        ...init.headers,
       },
-      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      body: init.form ?? (init.body !== undefined ? JSON.stringify(init.body) : undefined),
     });
   } catch {
     throw new AuthApiError(0, "NETWORK_ERROR", "서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.");
@@ -133,7 +143,8 @@ async function refreshTokens(): Promise<TokenPair> {
   return refreshing;
 }
 
-async function authed<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+/** 인증이 필요한 백엔드 요청 (401 시 refresh 1회 후 재시도) */
+export async function authed<T>(path: string, init: RequestInit2 = {}): Promise<T> {
   const tokens = tokenStore.get();
   if (!tokens) throw new AuthApiError(401, "INVALID_ACCESS_TOKEN", "로그인이 필요해요.");
   try {

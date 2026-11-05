@@ -10,11 +10,11 @@ import {
   ROLE_LABEL,
   authApi,
   authErrorMessage,
-  safeNext,
   validatePassword,
 } from "@moa/shared/auth";
 import { useAuth } from "@moa/shared/auth-context";
 import { ADMIN_URL } from "@moa/shared/urls";
+import { loginHref, safeChatNext } from "@/components/chat/entry";
 import { AuthField, AuthShell, FormAlert, FullPageSpinner, PasswordField, SubmitButton } from "@moa/ui";
 
 /** 이 고객센터 위젯이 속한 기업 ID — 고객은 로그인 후 자동으로 이 기업에 연결된다 */
@@ -23,8 +23,8 @@ export const WIDGET_TENANT_ID = process.env.NEXT_PUBLIC_TENANT_ID ?? "syncnote";
 function Brand() {
   return (
     <Link href="/" className="inline-flex items-center gap-2.5">
-      <span className="grid size-8 place-items-center rounded-full bg-indigo-600 text-[13px] font-bold text-white">F</span>
-      <span className="text-[15px] font-semibold text-zinc-900">플로노트 고객센터</span>
+      <span className="grid size-8 place-items-center rounded-full bg-indigo-600 text-[13px] font-bold text-white">S</span>
+      <span className="text-[15px] font-semibold text-zinc-900">싱크노트 고객센터</span>
     </Link>
   );
 }
@@ -63,7 +63,7 @@ function Aside() {
 
 export function CustomerLogin() {
   const router = useRouter();
-  const next = safeNext(useSearchParams().get("next"), "/chat");
+  const next = safeChatNext(useSearchParams().get("next"));
   const { login, status, user } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -99,7 +99,7 @@ export function CustomerLogin() {
       footer={
         <>
           처음이신가요?{" "}
-          <Link href={`/signup?next=${encodeURIComponent(next)}`} className="font-medium text-indigo-600 underline-offset-4 hover:underline">
+          <Link href={loginHref("/signup", next)} className="font-medium text-indigo-600 underline-offset-4 hover:underline">
             회원가입
           </Link>
         </>
@@ -109,7 +109,7 @@ export function CustomerLogin() {
         <AuthField label="이메일" type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
         <PasswordField label="비밀번호" autoComplete="current-password" placeholder="비밀번호" value={password} onChange={(e) => setPassword(e.target.value)} />
         <FormAlert message={error?.msg ?? null} requestId={error?.rid} />
-        <SubmitButton loading={loading} className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-300">
+        <SubmitButton loading={loading} tone="indigo">
           <LogIn className="size-4" /> 로그인
         </SubmitButton>
       </form>
@@ -121,7 +121,7 @@ export function CustomerLogin() {
 
 export function CustomerSignup() {
   const router = useRouter();
-  const next = safeNext(useSearchParams().get("next"), "/chat");
+  const next = safeChatNext(useSearchParams().get("next"));
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -164,7 +164,7 @@ export function CustomerSignup() {
       footer={
         <>
           이미 계정이 있나요?{" "}
-          <Link href={`/login?next=${encodeURIComponent(next)}`} className="font-medium text-indigo-600 underline-offset-4 hover:underline">
+          <Link href={loginHref("/login", next)} className="font-medium text-indigo-600 underline-offset-4 hover:underline">
             로그인
           </Link>
         </>
@@ -176,11 +176,11 @@ export function CustomerSignup() {
         <PasswordField label="비밀번호 확인" autoComplete="new-password" placeholder="한 번 더 입력" value={confirm} onChange={(e) => setConfirm(e.target.value)} error={confirmErr} />
         <FormAlert message={error?.msg ?? null} requestId={error?.rid} />
         {error?.code === "EMAIL_ALREADY_EXISTS" && (
-          <Link href={`/login?next=${encodeURIComponent(next)}`} className="block text-center text-[13px] font-medium text-indigo-600 underline underline-offset-4">
+          <Link href={loginHref("/login", next)} className="block text-center text-[13px] font-medium text-indigo-600 underline underline-offset-4">
             로그인하러 가기
           </Link>
         )}
-        <SubmitButton loading={loading} className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-300">
+        <SubmitButton loading={loading} tone="indigo">
           가입하고 상담 시작 <ArrowRight className="size-4" />
         </SubmitButton>
       </form>
@@ -213,7 +213,8 @@ export function RequireCustomer({ children }: { children: ReactNode }) {
   const joining = useRef(false);
 
   useEffect(() => {
-    if (status === "anonymous") router.replace("/login?next=/chat");
+    // 싱크노트 진입 query(cid·error_code 등)까지 포함한 현재 주소를 next로 보존
+    if (status === "anonymous") router.replace(loginHref("/login", window.location.pathname + window.location.search));
   }, [status, router]);
 
   useEffect(() => {
@@ -230,7 +231,7 @@ export function RequireCustomer({ children }: { children: ReactNode }) {
 
   const signOut = () => {
     logout();
-    router.replace("/login?next=/chat");
+    router.replace(loginHref("/login", window.location.pathname + window.location.search));
   };
 
   if (status === "authenticated" && user && user.role !== "customer") {
@@ -263,7 +264,7 @@ export function RequireCustomer({ children }: { children: ReactNode }) {
           </button>
         }
       >
-        {user.email} 계정은 &lsquo;{tenant.name}&rsquo; 고객으로 연결되어 있어요. 플로노트 상담은 다른 계정으로 이용해 주세요.
+        {user.email} 계정은 &lsquo;{tenant.name}&rsquo; 고객으로 연결되어 있어요. 싱크노트 상담은 다른 계정으로 이용해 주세요.
       </Notice>
     );
   }

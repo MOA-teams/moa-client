@@ -20,7 +20,7 @@ function notifiable(m: Message) {
 function notifyText(m: Message) {
   if (m.kind === "rating_request") return { title: "상담이 종료되었어요", body: "답변은 만족스러우셨나요? 별점을 남겨주세요." };
   if (m.kind === "info_request") return { title: "추가 정보가 필요해요", body: m.text };
-  return { title: "플로노트 상담원이 답변했어요", body: m.text };
+  return { title: "싱크노트 상담원이 답변했어요", body: m.text };
 }
 
 function supported() {
