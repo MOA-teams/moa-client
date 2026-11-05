@@ -17,7 +17,9 @@ import {
   type BackendStatus,
   type CreateInquiryBody,
   type InquiryEnv,
+  LIVE_INQUIRY_ID,
 } from "@moa/shared/inquiry";
+import { FeedbackCard } from "./feedback-card";
 import { CATEGORIES, CATEGORY_LABEL } from "@moa/shared/labels";
 import type { Category, Message } from "@moa/shared/types";
 import { ADMIN_URL } from "@moa/shared/urls";
@@ -28,21 +30,22 @@ import { initialEnv, loginHref, readEntry, type EntryInfo } from "./entry";
 import { useInquiryChat } from "./use-inquiry-chat";
 
 const SERVICE = "싱크노트";
-const STORAGE_BASE = "moa.chat.inquiry";
+// v2: 문의 ID가 문자열(Q-1006)로 바뀌어 이전 숫자 저장값과 분리
+const STORAGE_BASE = "moa.chat.inquiry.v2";
 const MAX_FILE = 10 * 1024 * 1024;
 const ACCEPT = ["image/png", "image/jpeg", "application/pdf"];
 
-function readStored(key: string): number | null {
+function readStored(key: string): string | null {
   try {
-    const v = Number(localStorage.getItem(key));
-    return Number.isSafeInteger(v) && v > 0 ? v : null;
+    const v = localStorage.getItem(key);
+    return v && LIVE_INQUIRY_ID.test(v) ? v : null;
   } catch {
     return null;
   }
 }
-function writeStored(key: string, id: number | null) {
+function writeStored(key: string, id: string | null) {
   try {
-    if (id) localStorage.setItem(key, String(id));
+    if (id) localStorage.setItem(key, id);
     else localStorage.removeItem(key);
   } catch {}
 }
@@ -65,9 +68,9 @@ function maskSensitive(text: string) {
 /** 백엔드 메시지 → 화면·알림용 메시지 */
 function toMessage(m: BackendMessage): Message {
   return {
-    id: String(m.message_id),
+    id: m.message_id,
     role: m.sender === "customer" ? "customer" : m.sender === "agent" ? "agent" : "ai",
-    kind: m.message_type === "acknowledgement" ? "receipt" : m.message_type === "information_request" ? "info_request" : "text",
+    kind: m.message_type === "접수 안내" ? "receipt" : m.message_type === "정보 수집 질문" ? "info_request" : m.message_type === "최종 답변" ? "answer" : "text",
     text: m.text,
     createdAt: m.sent_at,
   };
@@ -90,7 +93,7 @@ export function CustomerChat() {
   const [entry] = useState<EntryInfo>(() => readEntry(new URLSearchParams(params.toString())));
   const storageKey = `${STORAGE_BASE}:${user?.user_id ?? "anon"}`;
 
-  const [inquiryId, setInquiryId] = useState<number | null>(null);
+  const [inquiryId, setInquiryId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [category, setCategory] = useState<Category | null>(null);
   const [env, setEnv] = useState<InquiryEnv>({ os: null, app_version: null, error_code: null });
@@ -104,7 +107,7 @@ export function CustomerChat() {
   const fileRef = useRef<HTMLInputElement>(null);
   // 실패한 요청의 키·본문 보관 → 같은 내용 재시도는 같은 Idempotency-Key
   const pendingCreate = useRef<{ key: string; body: CreateInquiryBody } | null>(null);
-  const pendingMessage = useRef<{ key: string; inquiryId: number; body: AddMessageBody } | null>(null);
+  const pendingMessage = useRef<{ key: string; inquiryId: string; body: AddMessageBody } | null>(null);
 
   useEffect(() => {
     // 외부(싱크노트)에서 진입 정보와 함께 들어오면 기존 상담에 이어 보내지 않고 새 문의 흐름
@@ -117,8 +120,8 @@ export function CustomerChat() {
 
   const chat = useInquiryChat(inquiryId);
   const messages = useMemo(() => chat.messages.map(toMessage), [chat.messages]);
-  const rawById = useMemo(() => new Map(chat.messages.map((m) => [String(m.message_id), m])), [chat.messages]);
-  useAnswerNotifier(inquiryId ? String(inquiryId) : null, messages);
+  const rawById = useMemo(() => new Map(chat.messages.map((m) => [m.message_id, m])), [chat.messages]);
+  useAnswerNotifier(inquiryId, messages);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -155,7 +158,7 @@ export function CustomerChat() {
     }
   }
 
-  async function createInquiry(message: string, attachments: number[]) {
+  async function createInquiry(message: string, attachments: string[]) {
     const body: CreateInquiryBody = {
       message,
       env: { ...env },
@@ -174,7 +177,7 @@ export function CustomerChat() {
     if (params.toString()) router.replace("/chat", { scroll: false });
   }
 
-  async function addMessage(id: number, body: AddMessageBody) {
+  async function addMessage(id: string, body: AddMessageBody) {
     const prev = pendingMessage.current;
     const key = prev && prev.inquiryId === id && same(prev.body, body) ? prev.key : newIdempotencyKey();
     pendingMessage.current = { key, inquiryId: id, body };
@@ -195,7 +198,7 @@ export function CustomerChat() {
     setSending(true);
     setError(null);
     try {
-      if (!inquiryId || chat.status === "closed") {
+      if (!inquiryId || chat.status === "상담 종료") {
         await createInquiry(out, attachments);
       } else {
         try {
@@ -231,7 +234,7 @@ export function CustomerChat() {
   }
 
   const status = chat.status;
-  const closed = status === "closed";
+  const closed = status === "상담 종료";
   const uploading = files.some((f) => !f.att && !f.error);
 
   return (
@@ -306,6 +309,9 @@ export function CustomerChat() {
 
           {chat.error && chat.error.code !== "INQUIRY_NOT_FOUND" && (
             <p className="text-center text-[12px] text-zinc-400">대화를 불러오는 중 문제가 생겼어요. 잠시 후 자동으로 다시 시도해요.</p>
+          )}
+          {closed && inquiryId && chat.latest?.feedback_requested && (
+            <FeedbackCard inquiryId={inquiryId} submitted={!!chat.latest.feedback_submitted} feedback={chat.latest.feedback ?? null} onDone={chat.poke} />
           )}
           {closed && <p className="py-2 text-center text-[12px] text-zinc-400">상담이 종료되었어요. 새 메시지를 보내면 새 문의로 접수됩니다.</p>}
         </div>
@@ -442,26 +448,21 @@ export function CustomerChat() {
 
 /* --------------------------------- 하위 컴포넌트 --------------------------------- */
 
-const STEPS: Array<{ key: BackendStatus; label: string }> = [
-  { key: "received", label: "접수" },
-  { key: "in_review", label: "담당자 확인 중" },
-  { key: "answered", label: "답변 완료" },
-  { key: "closed", label: "상담 종료" },
-];
+const STEPS: BackendStatus[] = ["접수", "담당자 확인 중", "답변 완료", "상담 종료"];
 
 function StatusBar({ status }: { status: BackendStatus }) {
-  const needs = status === "needs_info";
-  const idx = needs ? 1 : STEPS.findIndex((s) => s.key === status);
+  const needs = status === "추가 정보 필요";
+  const idx = needs ? 1 : STEPS.indexOf(status);
   return (
     <div className="mt-3 flex items-center gap-1.5">
       {STEPS.map((s, i) => {
         const active = i === idx;
         const done = i < idx;
         return (
-          <div key={s.key} className="flex flex-1 flex-col gap-1">
+          <div key={s} className="flex flex-1 flex-col gap-1">
             <div className={cn("h-1 rounded-full", done ? "bg-indigo-600" : active ? (needs ? "bg-amber-500" : "bg-indigo-600") : "bg-zinc-200")} />
             <span className={cn("text-[11px]", active ? (needs ? "font-semibold text-amber-600" : "font-semibold text-indigo-700") : done ? "text-zinc-500" : "text-zinc-400")}>
-              {needs && i === 1 ? "추가 정보 필요" : s.label}
+              {needs && i === 1 ? "추가 정보 필요" : s}
             </span>
           </div>
         );
@@ -551,7 +552,7 @@ function MessageItem({ m, attachments }: { m: Message; attachments: AttachmentMe
     );
   }
   return (
-    <BotBubble label={m.role === "ai" ? (m.kind === "info_request" ? "자동 안내 · 정보 요청" : "자동 안내") : "상담원"} time={time}>
+    <BotBubble label={m.role === "ai" ? (m.kind === "info_request" ? "자동 안내 · 정보 요청" : m.kind === "answer" ? "자동 답변" : "자동 안내") : "상담원"} time={time}>
       {m.text}
     </BotBubble>
   );

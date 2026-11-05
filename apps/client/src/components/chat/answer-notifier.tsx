@@ -14,13 +14,14 @@ const DISMISS_KEY = "moa.chat.notifyDismissed";
 const BASE_TITLE = "고객센터 채팅";
 
 function notifiable(m: Message) {
-  return m.role === "agent" || m.kind === "info_request" || m.kind === "rating_request";
+  // 담당자 답변, AI 자동 답변·정보 수집 질문 (접수 안내는 제외)
+  return m.role === "agent" || m.kind === "answer" || m.kind === "info_request" || m.kind === "rating_request";
 }
 
 function notifyText(m: Message) {
   if (m.kind === "rating_request") return { title: "상담이 종료되었어요", body: "답변은 만족스러우셨나요? 별점을 남겨주세요." };
   if (m.kind === "info_request") return { title: "추가 정보가 필요해요", body: m.text };
-  return { title: "싱크노트 상담원이 답변했어요", body: m.text };
+  return { title: m.role === "ai" ? "싱크노트 자동 답변이 도착했어요" : "싱크노트 상담원이 답변했어요", body: m.text };
 }
 
 function supported() {

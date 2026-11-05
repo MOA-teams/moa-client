@@ -16,12 +16,12 @@ interface Page {
  * - message_id로 중복 제거, INVALID_CURSOR면 처음부터 다시
  * - latest: 마지막 응답 전체 (상태·메타 필드 표시용)
  */
-export function useCursorMessages<P extends Page>(id: number | null, fetchPage: (id: number, cursor: string | null) => Promise<P>, intervalMs = 3000) {
+export function useCursorMessages<P extends Page>(id: string | null, fetchPage: (id: string, cursor: string | null) => Promise<P>, intervalMs = 3000) {
   const [messages, setMessages] = useState<BackendMessage[]>([]);
   const [latest, setLatest] = useState<P | null>(null);
   const [error, setError] = useState<AuthApiError | null>(null);
   const cursor = useRef<string | null>(null);
-  const seen = useRef<Set<number>>(new Set());
+  const seen = useRef<Set<string>>(new Set());
   const pokeRef = useRef<() => void>(() => {});
   const fetchRef = useRef(fetchPage);
   useEffect(() => {

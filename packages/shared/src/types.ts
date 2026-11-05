@@ -23,7 +23,7 @@ export interface Attachment {
 }
 
 export type MessageRole = "customer" | "ai" | "agent" | "system";
-export type MessageKind = "text" | "receipt" | "info_request" | "rating_request" | "closed_notice";
+export type MessageKind = "text" | "receipt" | "info_request" | "answer" | "rating_request" | "closed_notice";
 
 export interface Message {
   id: string;

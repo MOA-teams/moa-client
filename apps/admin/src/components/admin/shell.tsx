@@ -49,7 +49,7 @@ async function loadShell(): Promise<ShellData> {
     adminApi.alerts(),
     adminApi.settings(),
     // 실제 문의 중 새로 접수된 건 (백엔드)
-    adminInquiryApi.list({ status: "received" }, null, 100).catch(() => null),
+    adminInquiryApi.list({ status: "접수" }, null, 100).catch(() => null),
     adminApi.reviews(),
     adminApi.answers(),
     adminApi.groups(),

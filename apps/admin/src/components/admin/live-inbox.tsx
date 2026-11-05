@@ -5,9 +5,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AuthApiError, authErrorMessage } from "@moa/shared/auth";
 import {
-  BACKEND_CATEGORY_LABEL,
-  BACKEND_STATUS_LABEL,
-  BACKEND_URGENCY_LABEL,
+  INQUIRY_CATEGORIES,
+  INQUIRY_STATUSES,
+  INQUIRY_URGENCIES,
   adminInquiryApi,
   type AdminListFilter,
   type BackendCategory,
@@ -19,17 +19,17 @@ import { formatDateTime, timeAgo } from "@moa/shared/utils";
 import { Badge, Button, Card, Empty, LoadingBlock, Select } from "@moa/ui";
 
 const STATUS_TONE: Record<BackendStatus, string> = {
-  received: "bg-sky-50 text-sky-700 ring-sky-600/15",
-  in_review: "bg-indigo-50 text-indigo-700 ring-indigo-600/15",
-  needs_info: "bg-amber-50 text-amber-700 ring-amber-600/20",
-  answered: "bg-emerald-50 text-emerald-700 ring-emerald-600/15",
-  closed: "bg-zinc-100 text-zinc-600 ring-zinc-500/15",
+  접수: "bg-sky-50 text-sky-700 ring-sky-600/15",
+  "담당자 확인 중": "bg-indigo-50 text-indigo-700 ring-indigo-600/15",
+  "추가 정보 필요": "bg-amber-50 text-amber-700 ring-amber-600/20",
+  "답변 완료": "bg-emerald-50 text-emerald-700 ring-emerald-600/15",
+  "상담 종료": "bg-zinc-100 text-zinc-600 ring-zinc-500/15",
 };
 
 export const URGENCY_TONE: Record<BackendUrgency, string> = {
-  high: "bg-orange-50 text-orange-700 ring-orange-600/15",
-  normal: "bg-zinc-100 text-zinc-700 ring-zinc-500/15",
-  low: "bg-zinc-50 text-zinc-500 ring-zinc-400/15",
+  높음: "bg-orange-50 text-orange-700 ring-orange-600/15",
+  보통: "bg-zinc-100 text-zinc-700 ring-zinc-500/15",
+  낮음: "bg-zinc-50 text-zinc-500 ring-zinc-400/15",
 };
 
 type All = "";
@@ -98,19 +98,19 @@ export function LiveInbox() {
           aria-label="상태"
           value={filter.status ?? ""}
           onChange={(v) => set("status", v)}
-          options={[{ value: "", label: "모든 상태" }, ...(Object.keys(BACKEND_STATUS_LABEL) as BackendStatus[]).map((s) => ({ value: s, label: BACKEND_STATUS_LABEL[s] }))]}
+          options={[{ value: "", label: "모든 상태" }, ...INQUIRY_STATUSES.map((s) => ({ value: s, label: s }))]}
         />
         <Select<BackendCategory | All>
           aria-label="AI 분류"
           value={filter.category ?? ""}
           onChange={(v) => set("category", v)}
-          options={[{ value: "", label: "모든 AI 분류" }, ...(Object.keys(BACKEND_CATEGORY_LABEL) as BackendCategory[]).map((c) => ({ value: c, label: BACKEND_CATEGORY_LABEL[c] }))]}
+          options={[{ value: "", label: "모든 AI 분류" }, ...INQUIRY_CATEGORIES.map((c) => ({ value: c, label: c }))]}
         />
         <Select<BackendUrgency | All>
           aria-label="긴급도"
           value={filter.urgency ?? ""}
           onChange={(v) => set("urgency", v)}
-          options={[{ value: "", label: "모든 긴급도" }, ...(Object.keys(BACKEND_URGENCY_LABEL) as BackendUrgency[]).map((u) => ({ value: u, label: BACKEND_URGENCY_LABEL[u] }))]}
+          options={[{ value: "", label: "모든 긴급도" }, ...INQUIRY_URGENCIES.map((u) => ({ value: u, label: u }))]}
         />
         <span className="ml-auto flex items-center gap-2 text-[12px] text-zinc-400">
           {updatedAt && `${formatDateTime(updatedAt)} 기준 · 5초마다 새로고침`}
@@ -143,16 +143,16 @@ export function LiveInbox() {
             <li key={i.inquiry_id}>
               <Link
                 href={`/inquiries/${i.inquiry_id}`}
-                className="grid grid-cols-[72px_1fr] items-center gap-3 px-4 py-3.5 transition hover:bg-zinc-50 md:grid-cols-[72px_1fr_210px_120px_80px]"
+                className="grid grid-cols-[72px_1fr] items-center gap-3 px-4 py-3.5 transition hover:bg-zinc-50 md:grid-cols-[72px_1fr_230px_120px_80px]"
               >
                 {i.urgency ? (
-                  <Badge className={URGENCY_TONE[i.urgency]}>{BACKEND_URGENCY_LABEL[i.urgency]}</Badge>
+                  <Badge className={URGENCY_TONE[i.urgency]}>{i.urgency}</Badge>
                 ) : (
                   <Badge className="bg-white text-zinc-400 ring-zinc-200">분석 전</Badge>
                 )}
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-[11.5px] text-zinc-400">#{i.inquiry_id}</span>
+                    <span className="font-mono text-[11.5px] text-zinc-400">{i.inquiry_id}</span>
                     <span className="truncate text-[14px] font-medium text-zinc-900">{i.title}</span>
                   </div>
                   <p className="mt-1 text-[12px] text-zinc-500">{formatDateTime(i.created_at)}</p>
@@ -161,16 +161,16 @@ export function LiveInbox() {
                   {i.category ? (
                     <span className="flex items-center gap-1 text-zinc-800">
                       <Sparkles className="size-3 text-indigo-500" />
-                      {BACKEND_CATEGORY_LABEL[i.category]}
+                      {i.category}
                     </span>
                   ) : (
                     <span className="text-zinc-400">AI 분류 전</span>
                   )}
                   <span className="text-zinc-300">·</span>
-                  <span className="text-zinc-500">고객 선택 {BACKEND_CATEGORY_LABEL[i.customer_category]}</span>
+                  <span className="text-zinc-500">고객 선택 {i.customer_category}</span>
                 </div>
                 <div className="hidden md:block">
-                  <Badge className={STATUS_TONE[i.status]}>{BACKEND_STATUS_LABEL[i.status]}</Badge>
+                  <Badge className={STATUS_TONE[i.status]}>{i.status}</Badge>
                 </div>
                 <span className="hidden text-right text-[12px] text-zinc-400 md:block">{timeAgo(i.created_at)}</span>
               </Link>

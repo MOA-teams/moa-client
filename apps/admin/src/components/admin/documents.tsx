@@ -4,6 +4,7 @@ import { Archive, ArchiveRestore, BookText, ChevronDown, FileUp, History, Upload
 import { useRef, useState } from "react";
 import { ApiError, adminApi } from "@moa/shared/api";
 import { usePolling } from "@moa/shared/hooks";
+import { LiveDocuments } from "./live-documents";
 import { DOC_STATUS_LABEL, DOC_STATUS_TONE, DOC_TYPE_LABEL } from "@moa/shared/labels";
 import type { DocType, KDocument } from "@moa/shared/types";
 import { cn, formatDateTime } from "@moa/shared/utils";
@@ -12,6 +13,33 @@ import { Badge, Button, Card, CardHeader, LoadingBlock, PageHeader, Select } fro
 const TYPES = Object.keys(DOC_TYPE_LABEL) as DocType[];
 
 export function DocumentsView() {
+  const [tab, setTab] = useState<"live" | "demo">("live");
+  return (
+    <>
+      <PageHeader title="문서" desc="정책·FAQ·기능 명세·릴리즈 노트. 새 버전이 올라오면 이전 버전은 검색에서 빠지고, 그 문서를 근거로 쓴 답변은 재검토로 내려가요." />
+      <div className="mb-5 flex w-fit gap-1 rounded-lg bg-zinc-200/50 p-1 text-[13px]">
+        {(
+          [
+            ["live", "실제 문서"],
+            ["demo", "데모 시나리오"],
+          ] as const
+        ).map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className={cn("rounded-md px-3.5 py-1.5 transition", tab === k ? "bg-white font-medium text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "live" ? <LiveDocuments /> : <MockDocuments />}
+    </>
+  );
+}
+
+/** 데모 시나리오(mock) — 요금 변경 push 재검토 장면용 */
+function MockDocuments() {
   const { data, refresh } = usePolling(() => adminApi.documents(), 4000);
   const [open, setOpen] = useState<string | null>(null);
 
@@ -19,10 +47,6 @@ export function DocumentsView() {
 
   return (
     <>
-      <PageHeader
-        title="문서"
-        desc="정책·FAQ·기능 명세·릴리즈 노트. 같은 이름으로 다시 올리면 버전이 +1 되고, 그 문서를 근거로 쓴 답변은 재검토로 내려가요."
-      />
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <Card className="self-start overflow-hidden">
           <div className="hidden grid-cols-[1fr_96px_64px_110px_130px] gap-3 border-b border-zinc-100 bg-zinc-50/60 px-5 py-2.5 text-[11.5px] font-medium text-zinc-500 md:grid">

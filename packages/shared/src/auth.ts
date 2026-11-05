@@ -9,7 +9,7 @@
 export type UserRole = "customer" | "agent" | "admin";
 
 export interface AuthUser {
-  user_id: number;
+  user_id: string;
   email: string;
   role: UserRole;
   tenant_id?: string | null;
@@ -165,7 +165,7 @@ export const authApi = {
   health: () => raw<Record<string, string>>("/health"),
 
   signup: (input: { email: string; password: string; role: UserRole }) =>
-    raw<{ user_id: number; email: string; role: UserRole }>("/api/v1/auth/signup", { method: "POST", body: input }),
+    raw<{ user_id: string; email: string; role: UserRole }>("/api/v1/auth/signup", { method: "POST", body: input }),
 
   async login(input: { email: string; password: string }) {
     const t = await raw<TokenPair>("/api/v1/auth/login", { method: "POST", body: input });
