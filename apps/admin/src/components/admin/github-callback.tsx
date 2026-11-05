@@ -8,7 +8,7 @@ import { AuthApiError } from "@moa/shared/auth";
 import { githubApi, inquiryErrorMessage, newIdempotencyKey, type AuthorizedRepository, type GitHubConnectBody } from "@moa/shared/inquiry";
 import { cn } from "@moa/shared/utils";
 import { Badge, Button, Card, CardHeader, LoadingBlock, PageHeader } from "@moa/ui";
-import { DEFAULT_EXCLUDES, GH_LEVEL_KEY } from "./github-integration";
+import { DEFAULT_EXCLUDES, GH_INSTALL_KEY, GH_LEVEL_KEY } from "./github-integration";
 
 type Err = { msg: string; rid?: string } | null;
 const toErr = (e: unknown): Err => ({ msg: inquiryErrorMessage(e), rid: e instanceof AuthApiError ? e.requestId : undefined });
@@ -24,12 +24,85 @@ function dirsOf(paths: string[]) {
   return [...set].sort();
 }
 
+/** 다시 연결 · App 설치 버튼 */
+function RestartActions() {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<Err>(null);
+  const [installUrl] = useState<string | null>(() => {
+    try {
+      return typeof window === "undefined" ? null : sessionStorage.getItem(GH_INSTALL_KEY);
+    } catch {
+      return null;
+    }
+  });
+
+  async function restart() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await githubApi.start();
+      try {
+        sessionStorage.setItem(GH_INSTALL_KEY, r.installation_url);
+      } catch {}
+      window.location.href = r.authorization_url;
+    } catch (e) {
+      setErr(toErr(e));
+      setBusy(false);
+    }
+  }
+
+  async function install() {
+    let url = installUrl;
+    if (!url) {
+      try {
+        url = (await githubApi.start()).installation_url;
+      } catch (e) {
+        return setErr(toErr(e));
+      }
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  return (
+    <div className="space-y-2">
+      {err && <p className="text-[12.5px] text-red-600">{err.msg}</p>}
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" onClick={install}>
+          GitHub App 설치하기
+        </Button>
+        <Button onClick={restart} loading={busy}>
+          다시 연결
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** 저장소가 없을 때: App 설치 → 다시 연결 */
+function NoRepos() {
+  return (
+    <div className="space-y-3 sm:col-span-2">
+      <p className="text-[13.5px] font-medium text-zinc-900">연결할 수 있는 저장소가 없어요</p>
+      <ol className="list-decimal space-y-1 pl-5 text-[13px] leading-relaxed text-zinc-600">
+        <li>
+          <b className="font-medium text-zinc-800">MOA GitHub App</b>을 연결할 저장소(또는 조직)에 설치해야 해요. 설치할 때 &lsquo;선택한 저장소만&rsquo;을 골랐다면 연결할 저장소를 포함해 주세요.
+        </li>
+        <li>로그인한 GitHub 계정이 그 저장소의 관리자 권한을 가지고 있어야 목록에 나와요.</li>
+        <li>설치를 마쳤으면 &lsquo;다시 연결&rsquo;을 눌러 주세요. GitHub 인증은 10분 동안만 유효해요.</li>
+      </ol>
+      <RestartActions />
+    </div>
+  );
+}
+
 /** GitHub 인증 후 돌아오는 페이지: 인증 완료 → 저장소·브랜치·경로 선택 → 연동·최초 인덱싱 */
 export function GitHubCallback() {
   const router = useRouter();
   const params = useSearchParams();
   const code = params.get("code");
   const state = params.get("state");
+  // App 설치 화면에서 돌아온 경우 (설치 URL에는 state가 없음)
+  const installedOnly = params.get("setup_action") === "install" && !state;
   const [authId, setAuthId] = useState<string | null>(null);
   const [repos, setRepos] = useState<AuthorizedRepository[] | null>(null);
   const [repo, setRepo] = useState<AuthorizedRepository | null>(null);
@@ -57,9 +130,10 @@ export function GitHubCallback() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
+    if (installedOnly) return;
     if (!code || !state) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setErr({ msg: "GitHub에서 인증 정보를 받지 못했어요. 설정에서 연결을 다시 시작해 주세요." });
+      setErr({ msg: "GitHub에서 인증 정보를 받지 못했어요. 연결을 다시 시작해 주세요." });
       return;
     }
     githubApi
@@ -70,7 +144,7 @@ export function GitHubCallback() {
         if (r.repositories.length === 1) setRepo(r.repositories[0]);
       })
       .catch((e) => setErr(toErr(e)));
-  }, [code, state]);
+  }, [code, state, installedOnly]);
 
   // 저장소 → 브랜치
   useEffect(() => {
@@ -150,7 +224,27 @@ export function GitHubCallback() {
         </div>
       )}
 
-      {!repos && !err && <LoadingBlock />}
+      {installedOnly && !repos && (
+        <Card className="max-w-2xl p-5">
+          <p className="text-[14px] font-semibold text-zinc-900">GitHub App 설치를 마쳤어요</p>
+          <p className="mt-1 text-[13px] text-zinc-500">이제 GitHub 계정 인증으로 저장소를 연결해 주세요.</p>
+          <div className="mt-4">
+            <RestartActions />
+          </div>
+        </Card>
+      )}
+      {err && !repos && (
+        <Card className="max-w-2xl p-5">
+          <p className="text-[13px] leading-relaxed text-zinc-600">
+            GitHub 인증은 시작 후 <b className="font-medium text-zinc-800">10분</b> 동안, 한 번만 쓸 수 있어요. 시간이 지났거나 이 페이지를 새로고침했다면 처음부터 다시 연결해 주세요. App을
+            아직 설치하지 않았다면 먼저 설치하세요.
+          </p>
+          <div className="mt-4">
+            <RestartActions />
+          </div>
+        </Card>
+      )}
+      {!repos && !err && !installedOnly && <LoadingBlock />}
 
       {repos && (
         <div className="grid max-w-4xl gap-5">
@@ -158,7 +252,7 @@ export function GitHubCallback() {
           <Card>
             <CardHeader title="1. 저장소" desc="GitHub App이 설치된, 관리 가능한 저장소예요" icon={<FolderGit2 className="size-4" />} />
             <div className="grid gap-2 p-5 sm:grid-cols-2">
-              {repos.length === 0 && <p className="text-[13px] text-zinc-500">선택할 수 있는 저장소가 없어요. GitHub App 설치 범위를 확인해 주세요.</p>}
+              {repos.length === 0 && <NoRepos />}
               {repos.map((r) => (
                 <button
                   key={r.repository_id}
@@ -215,7 +309,9 @@ export function GitHubCallback() {
                           onClick={() => setInclude(on ? include.filter((x) => x !== d) : [...include, d])}
                           className={cn("flex items-center gap-2 truncate rounded-lg border px-3 py-2 text-left font-mono text-[12.5px] transition", on ? "border-zinc-900 bg-zinc-900 text-white" : "border-zinc-200 hover:border-zinc-300")}
                         >
-                          {on ? <Check className="size-3.5 shrink-0" /> : <span className="size-3.5 shrink-0" />}
+                          <span className={cn("grid size-4 shrink-0 place-items-center rounded border", on ? "border-white bg-white text-zinc-900" : "border-zinc-300 bg-white")}>
+                            {on && <Check className="size-3" />}
+                          </span>
                           {d}
                         </button>
                       );

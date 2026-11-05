@@ -10,6 +10,8 @@ import { cn, formatDateTime } from "@moa/shared/utils";
 import { Badge, Button, Card, CardHeader, LoadingBlock } from "@moa/ui";
 
 export const GH_LEVEL_KEY = "moa.github.pendingLevel";
+/** 인증 시작 응답의 App 설치 주소 (저장소가 없을 때 설치 안내용) */
+export const GH_INSTALL_KEY = "moa.github.installUrl";
 export const DEFAULT_EXCLUDES = [".env*", "*.pem", "*.key", "secrets/", "config/prod*"];
 
 type Err = { msg: string; rid?: string } | null;
@@ -59,6 +61,7 @@ export function GitHubIntegrationCard() {
       const r = await githubApi.start();
       try {
         sessionStorage.setItem(GH_LEVEL_KEY, String(level));
+        sessionStorage.setItem(GH_INSTALL_KEY, r.installation_url);
       } catch {}
       // GitHub 인증 → 등록된 callback(/integrations/github/callback)으로 돌아옴
       window.location.href = r.authorization_url;
