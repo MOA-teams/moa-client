@@ -20,6 +20,7 @@ import {
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ApiError, adminApi, demoApi, type ReviewView } from "@moa/shared/api";
+import { LiveChanges } from "./live-changes";
 import { usePolling } from "@moa/shared/hooks";
 import { SECURITY_LEVELS, TIER_LABEL } from "@moa/shared/labels";
 import type { PushEvent } from "@moa/shared/types";
@@ -29,6 +30,35 @@ import { Badge, Button, Card, CardHeader, Empty, LoadingBlock, Notice, PageHeade
 const SOURCE_LABEL = { push: "push 감지", doc_version: "문서 새 버전", rating: "낮은 별점" } as const;
 
 export function ChangesView() {
+  const [view, setView] = useState<"live" | "demo">("live");
+  return (
+    <>
+      <PageHeader
+        title="변경 감지 · 재검토 큐"
+        desc="감시 브랜치에 push가 들어오면 변경 내용을 요약하고, 연결된 답변·문서를 재검토 필요로 표시해요."
+      />
+      <div className="mb-5 flex w-fit gap-1 rounded-lg bg-zinc-200/50 p-1 text-[13px]">
+        {(
+          [
+            ["live", "실제 데이터"],
+            ["demo", "데모 시나리오"],
+          ] as const
+        ).map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setView(k)}
+            className={cn("rounded-md px-3.5 py-1.5 transition", view === k ? "bg-white font-medium text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === "live" ? <LiveChanges /> : <DemoChanges />}
+    </>
+  );
+}
+
+function DemoChanges() {
   const { data, refresh } = usePolling(async () => {
     const [events, reviews, settings, system] = await Promise.all([
       adminApi.pushEvents(),
@@ -78,23 +108,19 @@ export function ChangesView() {
 
   return (
     <>
-      <PageHeader
-        title="변경 감지 · 재검토 큐"
-        desc="감시 브랜치에 push가 들어오면 diff를 요약하고, 연결된 답변·문서를 재검토 필요로 표시해요. 처리 전까지 검색에서 빠집니다."
-        action={
-          <Button onClick={push} loading={pushing} disabled={data.system.pushed}>
-            <Upload className="size-3.5" />
-            {data.system.pushed ? "요금 변경 커밋 반영됨" : "데모: 요금 변경 커밋 push"}
-          </Button>
-        }
-      />
+      <div className="mb-4 flex justify-end">
+        <Button onClick={push} loading={pushing} disabled={data.system.pushed}>
+          <Upload className="size-3.5" />
+          {data.system.pushed ? "요금 변경 커밋 반영됨" : "데모: 요금 변경 커밋 push"}
+        </Button>
+      </div>
       <div className="mb-4">
         <Notice tone="info" title="데모 시나리오 화면이에요">
           감시 경로·커밋·재검토 항목은 발표용 합성 데이터이고, &lsquo;요금 변경 커밋 push&rsquo;도 실제 GitHub push가 아니라 시뮬레이션이에요. 데모 상태는 이 브라우저에만 저장돼요. 실제 저장소 연결은{" "}
           <Link href="/settings" className="font-medium underline underline-offset-2">
             설정 → GitHub 연동
           </Link>
-          에서 하고, push 기반 재검토 API가 백엔드에 생기면 이 화면을 실제 데이터로 바꿀 예정이에요.
+          에서 하고, 실제 push·재검토 항목은 &lsquo;실제 데이터&rsquo; 탭에서 확인하세요.
         </Notice>
       </div>
       {pushError && (
