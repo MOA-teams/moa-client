@@ -348,7 +348,7 @@ export function WorkspaceSetup() {
       )}
       <form onSubmit={submit} className="space-y-4" noValidate>
         {effectiveMode === "create" && (
-          <AuthField label="기업 이름" placeholder="예: 플로노트" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} hint="고객에게 보이는 이름이에요. 1~100자" />
+          <AuthField label="기업 이름" placeholder="예: 싱크노트" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} hint="고객에게 보이는 이름이에요. 1~100자" />
         )}
         <AuthField
           label="기업 ID"

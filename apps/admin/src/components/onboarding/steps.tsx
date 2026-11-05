@@ -1,5 +1,7 @@
 "use client";
 
+import "@/lib/browser-mock"; // 데모 데이터는 브라우저 안에서 처리
+
 import {
   AlertCircle,
   BookText,
@@ -99,7 +101,7 @@ export function ServiceStep({ setFooter }: StepProps) {
       <div className="space-y-5">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="서비스명" required>
-            <input className={inputCls} value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="예: 플로노트" />
+            <input className={inputCls} value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="예: 싱크노트" />
           </Field>
           <Field label="운영 시간">
             <input className={inputCls} value={form.hours} onChange={(e) => set("hours", e.target.value)} placeholder="평일 10:00 ~ 19:00" />
@@ -674,7 +676,7 @@ function Metric({ label, value, icon, tone }: { label: string; value: number; ic
 /* -------------------------------------------------------------------------- */
 
 const SAMPLE_CSV = `question,answer
-"동기화가 안 돼요","안녕하세요, 플로노트입니다. 설정 > 동기화에서 '지금 동기화'를 눌러주세요. 계속되면 로그아웃 후 다시 로그인해 주세요."
+"동기화가 안 돼요","안녕하세요, 싱크노트입니다. 설정 > 동기화에서 '지금 동기화'를 눌러주세요. 계속되면 로그아웃 후 다시 로그인해 주세요."
 "노트를 휴지통에서 복구할 수 있나요?","네, 휴지통에서 30일간 보관돼요. 휴지통 > 노트 선택 > 복구를 눌러주세요."
 "팀원 초대는 어떻게 하나요?","Team 요금제에서 워크스페이스 설정 > 멤버 > 초대하기로 이메일을 보내실 수 있어요."
 "오프라인에서도 쓸 수 있나요?","설정 > 실험실에서 오프라인 모드(베타)를 켜면 인터넷 없이도 작성할 수 있어요."`;

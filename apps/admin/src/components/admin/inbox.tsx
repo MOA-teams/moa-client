@@ -1,5 +1,7 @@
 "use client";
 
+import "@/lib/browser-mock"; // 데모 데이터는 브라우저 안에서 처리
+
 import { AlertCircle, Clock, Inbox as InboxIcon, Paperclip, Siren, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";

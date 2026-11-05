@@ -103,6 +103,25 @@ export function resetDB() {
   g.__moaDB = createDB();
 }
 
+/** 브라우저 저장용 스냅샷 (첨부 파일 제외, JSON 직렬화 가능) */
+export function exportDB(): string {
+  const { files: _files, ...rest } = db();
+  void _files;
+  return JSON.stringify(rest);
+}
+
+/** 저장해 둔 스냅샷 복원. 형식이 맞지 않으면 무시하고 false */
+export function importDB(json: string): boolean {
+  try {
+    const data = JSON.parse(json) as Omit<DB, "files">;
+    if (!data || !Array.isArray(data.inquiries) || !data.settings || !data.onboarding) return false;
+    g.__moaDB = { ...data, files: new Map() };
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function draftCtx(d: DB): DraftContext {
   return { documents: d.documents, answers: d.answers, settings: d.settings, codeValues: d.codeValues };
 }

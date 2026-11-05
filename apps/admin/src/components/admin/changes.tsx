@@ -1,5 +1,7 @@
 "use client";
 
+import "@/lib/browser-mock"; // 데모 데이터는 브라우저 안에서 처리
+
 import {
   ArrowRight,
   Ban,
@@ -86,6 +88,15 @@ export function ChangesView() {
           </Button>
         }
       />
+      <div className="mb-4">
+        <Notice tone="info" title="데모 시나리오 화면이에요">
+          감시 경로·커밋·재검토 항목은 발표용 합성 데이터이고, &lsquo;요금 변경 커밋 push&rsquo;도 실제 GitHub push가 아니라 시뮬레이션이에요. 데모 상태는 이 브라우저에만 저장돼요. 실제 저장소 연결은{" "}
+          <Link href="/settings" className="font-medium underline underline-offset-2">
+            설정 → GitHub 연동
+          </Link>
+          에서 하고, push 기반 재검토 API가 백엔드에 생기면 이 화면을 실제 데이터로 바꿀 예정이에요.
+        </Notice>
+      </div>
       {pushError && (
         <div className="mb-4">
           <Notice tone="warn">{pushError}</Notice>

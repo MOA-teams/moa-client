@@ -1,5 +1,7 @@
 "use client";
 
+import "@/lib/browser-mock"; // 데모 데이터는 브라우저 안에서 처리
+
 import { Bug, ExternalLink, GitCommitHorizontal, Play, Siren, Sparkles, Users } from "lucide-react";
 import { GithubIcon as Github } from "@moa/ui";
 import Link from "next/link";

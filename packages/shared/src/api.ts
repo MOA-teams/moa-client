@@ -42,8 +42,23 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * 데모(mock) 요청을 브라우저 안에서 처리하는 transport.
+ * 어드민이 등록하면 /api 데모 요청이 서버로 가지 않아, Vercel 인스턴스 간 상태 불일치가 생기지 않는다.
+ */
+export type MockTransport = (method: string, path: string, body: unknown) => Promise<{ status: number; data: unknown }>;
+let mockTransport: MockTransport | null = null;
+export function setMockTransport(t: MockTransport | null) {
+  mockTransport = t;
+}
+
 async function request<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, ...rest } = init ?? {};
+  if (mockTransport && BASE === "/api" && !(rest.body instanceof FormData)) {
+    const { status, data } = await mockTransport((rest.method ?? "GET").toUpperCase(), path, json);
+    if (status >= 400) throw new ApiError((data as { message?: string })?.message ?? "요청 실패", status, (data as { data?: unknown })?.data);
+    return data as T;
+  }
   const res = await fetch(`${BASE}${path}`, {
     ...rest,
     cache: "no-store",

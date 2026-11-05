@@ -1,5 +1,7 @@
 "use client";
 
+import "@/lib/browser-mock"; // 데모 데이터는 브라우저 안에서 처리
+
 import { ArrowLeft, ArrowRight, Check, RotateCcw, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";

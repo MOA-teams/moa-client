@@ -1,5 +1,7 @@
 "use client";
 
+import "@/lib/browser-mock"; // 데모 데이터는 브라우저 안에서 처리
+
 import { Archive, ArchiveRestore, BookText, ChevronDown, FileUp, History, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { ApiError, adminApi } from "@moa/shared/api";

@@ -1,13 +1,13 @@
 import type { Answer, Commit, KDocument, Settings } from "@moa/shared/types";
 
 /**
- * 데모용 가상 스타트업 "플로노트(FlowNote)" 시드 데이터.
+ * 데모용 가상 스타트업 "싱크노트(FlowNote)" 시드 데이터.
  * 명세서 9장 B. 가상 스타트업(합성 데이터) 기준. 발표 시 합성 데이터임을 밝힌다.
  */
 
 export const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
 
-export const SERVICE_NAME = "플로노트";
+export const SERVICE_NAME = "싱크노트";
 
 export function seedSettings(): Settings {
   return {
