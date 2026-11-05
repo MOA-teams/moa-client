@@ -125,6 +125,12 @@ export const REVIEW_ERROR_MESSAGE: Record<string, string> = {
   CUSTOMER_CONTENT_UNSAFE: "코드 블록이나 소스 파일 경로는 고객에게 보낼 수 없어요.",
 };
 
+/** suggestion_error 코드 → 안내 문구 */
+export const SUGGESTION_ERROR_LABEL: Record<string, string> = {
+  SOURCE_REVIEW_REQUIRED: "근거 문서를 먼저 재검토해야 AI 수정안을 만들 수 있어요. 지금은 직접 수정하거나 보관해 주세요.",
+};
+export const suggestionErrorLabel = (code: string) => SUGGESTION_ERROR_LABEL[code] ?? `AI 수정안을 만들지 못했어요. 직접 확인해 주세요. (${code})`;
+
 export const SUGGESTION_STATUS_LABEL: Record<SuggestionStatus, string> = {
   waiting_for_sources: "검색 동기화 대기 중",
   processing: "AI 수정안 만드는 중",

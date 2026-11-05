@@ -11,6 +11,7 @@ import {
   REVIEW_ERROR_MESSAGE,
   SUGGESTION_STATUS_LABEL,
   reviewApi,
+  suggestionErrorLabel,
   type BulkResultItem,
   type LiveCommit,
   type LivePushEvent,
@@ -18,7 +19,7 @@ import {
   type ReviewAction,
 } from "@moa/shared/reviews";
 import { cn, diffWords, formatDateTime, timeAgo } from "@moa/shared/utils";
-import { Badge, Button, Card, CardHeader, Empty, LoadingBlock, Notice } from "@moa/ui";
+import { Badge, Button, Card, CardHeader, Empty, LoadingBlock, Notice, RichText } from "@moa/ui";
 
 const SOURCE_LABEL: Record<LiveReview["source"], string> = { push: "push 감지", doc_version: "문서 새 버전", existing_state: "기존 상태 이관" };
 const BULK_LIMIT = 50;
@@ -432,10 +433,10 @@ function ReviewRow({ r, selected, onSelect, onDone }: { r: LiveReview; selected:
                           {p.text}
                         </span>
                       ))
-                    : r.current_text}
+                    : <RichText text={r.current_text} />}
                 </button>
               )}
-              {r.suggestion_error && !editing && <p className="mt-1.5 text-[11.5px] text-amber-700">{r.suggestion_error}</p>}
+              {r.suggestion_error && !editing && <p className="mt-1.5 text-[11.5px] text-amber-700">{suggestionErrorLabel(r.suggestion_error)}</p>}
               {error && <p role="alert" className="mt-1.5 text-[12px] text-red-600">{error}</p>}
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <span className="mr-auto text-[11.5px] text-zinc-500">
