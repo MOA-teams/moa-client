@@ -5,6 +5,7 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  LogOut,
   FileText,
   Monitor,
   Paperclip,
@@ -12,30 +13,32 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, customerApi, type CustomerInquiry } from "@moa/shared/api";
 import { usePolling } from "@moa/shared/hooks";
+import { useAuth } from "@moa/shared/auth-context";
 import { NotifyPrompt, useAnswerNotifier } from "./answer-notifier";
 import { ADMIN_URL } from "@moa/shared/urls";
 import { CATEGORIES, CATEGORY_LABEL, STATUS_LABEL } from "@moa/shared/labels";
 import type { Attachment, Category, Environment, InquiryStatus, Message } from "@moa/shared/types";
 import { cn, formatBytes, formatTime } from "@moa/shared/utils";
 
-const STORAGE_KEY = "moa.chat.inquiryId";
+const STORAGE_BASE = "moa.chat.inquiryId";
 const MAX_FILE = 10 * 1024 * 1024;
 const ACCEPT = ["image/png", "image/jpeg", "application/pdf"];
 
-function readStored() {
+function readStored(key: string) {
   try {
-    return localStorage.getItem(STORAGE_KEY);
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
 }
-function writeStored(id: string | null) {
+function writeStored(key: string, id: string | null) {
   try {
-    if (id) localStorage.setItem(STORAGE_KEY, id);
-    else localStorage.removeItem(STORAGE_KEY);
+    if (id) localStorage.setItem(key, id);
+    else localStorage.removeItem(key);
   } catch {}
 }
 
@@ -79,6 +82,11 @@ function maskSensitive(text: string) {
 const STEPS: InquiryStatus[] = ["received", "in_review", "answered", "closed"];
 
 export function CustomerChat() {
+  const { user, logout } = useAuth();
+  const router = useRouter();
+  // 상담 기록은 로그인 사용자별로 분리
+  const storageKey = user ? `${STORAGE_BASE}:${user.user_id}` : STORAGE_BASE;
+  const customerName = user?.email.split("@")[0] ?? "고객";
   const [inquiryId, setInquiryId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [category, setCategory] = useState<Category | null>(null);
@@ -94,10 +102,10 @@ export function CustomerChat() {
 
   useEffect(() => {
     // 창을 닫아도 대화 유지 (4-5)
-    setInquiryId(readStored());
+    setInquiryId(readStored(storageKey));
     setEnv(detectEnv());
     setReady(true);
-  }, []);
+  }, [storageKey]);
 
   const { data: inquiry, setData, error: loadError } = usePolling<CustomerInquiry | null>(
     () => (inquiryId ? customerApi.get(inquiryId) : Promise.resolve(null)),
@@ -119,10 +127,10 @@ export function CustomerChat() {
   useEffect(() => {
     if (loadError && inquiryId) {
       // 데모 초기화 등으로 문의가 사라진 경우
-      writeStored(null);
+      writeStored(storageKey, null);
       setInquiryId(null);
     }
-  }, [loadError, inquiryId]);
+  }, [loadError, inquiryId, storageKey]);
 
   async function addFiles(list: FileList | null) {
     if (!list) return;
@@ -161,18 +169,19 @@ export function CustomerChat() {
     try {
       if (!inquiryId) {
         const created = await customerApi.start({
+          customerName,
           customerCategory: category,
           text: out,
           environment: env,
           attachments: atts,
         });
-        writeStored(created.id);
+        writeStored(storageKey, created.id);
         setInquiryId(created.id);
         setData(created);
       } else {
         const r = await customerApi.send(inquiryId, { text: out, attachments: atts, environment: env });
         if (r.newInquiry) {
-          writeStored(r.inquiry.id);
+          writeStored(storageKey, r.inquiry.id);
           setInquiryId(r.inquiry.id);
         }
         setData(r.inquiry);
@@ -187,7 +196,7 @@ export function CustomerChat() {
   }
 
   function newChat() {
-    writeStored(null);
+    writeStored(storageKey, null);
     setInquiryId(null);
     setData(null);
     setCategory(null);
@@ -212,11 +221,24 @@ export function CustomerChat() {
                 <p className="text-[12px] text-zinc-500">평일 10:00 ~ 19:00 · 평균 응답 12분</p>
               </div>
             </div>
-            {inquiryId && (
-              <button onClick={newChat} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-zinc-500 hover:bg-zinc-100" title="새 상담">
-                <RotateCcw className="size-3.5" /> 새 상담
+            <div className="flex items-center gap-0.5">
+              {inquiryId && (
+                <button onClick={newChat} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-zinc-500 hover:bg-zinc-100" title="새 상담">
+                  <RotateCcw className="size-3.5" /> 새 상담
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  logout();
+                  router.replace("/login?next=/chat");
+                }}
+                className="grid size-7 place-items-center rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                title={user ? `${user.email} 로그아웃` : "로그아웃"}
+                aria-label="로그아웃"
+              >
+                <LogOut className="size-3.5" />
               </button>
-            )}
+            </div>
           </div>
           {status && <StatusBar status={status} />}
         </header>

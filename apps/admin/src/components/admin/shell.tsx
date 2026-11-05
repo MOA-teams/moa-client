@@ -6,6 +6,7 @@ import {
   Bug,
   GitCommitHorizontal,
   Inbox,
+  LogOut,
   MessageCircle,
   RotateCcw,
   Rocket,
@@ -20,6 +21,8 @@ import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { adminApi, demoApi } from "@moa/shared/api";
 import { usePolling } from "@moa/shared/hooks";
 import { CLIENT_URL } from "@moa/shared/urls";
+import { ROLE_LABEL } from "@moa/shared/auth";
+import { useAuth } from "@moa/shared/auth-context";
 import type { Alert } from "@moa/shared/types";
 import { cn, timeAgo } from "@moa/shared/utils";
 import { Logo } from "@moa/ui";
@@ -63,6 +66,7 @@ async function loadShell(): Promise<ShellData> {
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const { user, tenant, logout } = useAuth();
   const { data, refresh } = usePolling(loadShell, 3000);
   const [bellOpen, setBellOpen] = useState(false);
   const [toasts, setToasts] = useState<Alert[]>([]);
@@ -110,8 +114,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
         </div>
         <div className="mx-3 mb-3 rounded-lg bg-zinc-50 px-3 py-2.5 ring-1 ring-zinc-200/70">
           <p className="text-[11px] text-zinc-500">고객사</p>
-          <p className="text-[13px] font-semibold text-zinc-900">플로노트</p>
-          <p className="mt-0.5 font-mono text-[10.5px] text-zinc-400">flownote-demo/flownote</p>
+          <p className="truncate text-[13px] font-semibold text-zinc-900">{tenant?.name ?? "—"}</p>
+          <p className="mt-0.5 font-mono text-[10.5px] text-zinc-400">{tenant?.tenant_id}</p>
         </div>
         <Suspense fallback={<div className="flex-1" />}>
           <SideNav counts={data?.counts} />
@@ -126,6 +130,28 @@ export function AdminShell({ children }: { children: ReactNode }) {
           <button onClick={reset} className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] text-zinc-600 hover:bg-zinc-100">
             <RotateCcw className="size-4" /> 데모 데이터 초기화
           </button>
+          {user && (
+            <div className="mt-2 flex items-center gap-2.5 rounded-lg border border-zinc-200/80 px-3 py-2.5">
+              <span className="grid size-7 shrink-0 place-items-center rounded-full bg-zinc-900 text-[12px] font-semibold uppercase text-white">
+                {user.email[0]}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[12.5px] font-medium text-zinc-900">{user.email}</p>
+                <p className="text-[11px] text-zinc-500">{ROLE_LABEL[user.role]}</p>
+              </div>
+              <button
+                onClick={() => {
+                  logout();
+                  router.replace("/login");
+                }}
+                className="grid size-7 place-items-center rounded-md text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
+                aria-label="로그아웃"
+                title="로그아웃"
+              >
+                <LogOut className="size-4" />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 

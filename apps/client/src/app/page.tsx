@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { ADMIN_URL } from "@moa/shared/urls";
 import { Logo } from "@moa/ui";
+import { NavAuth } from "@/components/auth/customer-auth";
 
 const SCENES = [
   {
@@ -51,6 +52,7 @@ export default function Home() {
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
         <Logo />
         <nav className="flex items-center gap-1 text-sm">
+          <NavAuth />
           <Link href="/chat" className="rounded-lg px-3 py-2 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900">
             고객 채팅
           </Link>
