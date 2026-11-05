@@ -420,12 +420,14 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
   const draft = d.draft;
   const answered = (d.answers?.length ?? 0) > 0;
   const closed = d.status === "상담 종료";
-  const [text, setText] = useState(draft?.answer_text ?? "");
+  // 초안이 없고 AI가 추가 질문을 준비했으면 그 질문을 답변 칸에 채움
+  const suggested = draft?.answer_text ?? d.additional_question ?? "";
+  const [text, setText] = useState(suggested);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<Err>(null);
   const [newDraft, setNewDraft] = useState(false);
-  const draftKey = draft ? `${draft.draft_id}:${draft.revision}` : null;
+  const draftKey = draft ? `${draft.draft_id}:${draft.revision}` : d.additional_question ? `q:${d.additional_question}` : null;
   const shownKey = useRef(draftKey);
   const idem = useIdem<AnswerBody>();
 
@@ -435,9 +437,9 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
     shownKey.current = draftKey;
     if (!dirty) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setText(draft?.answer_text ?? "");
+      setText(suggested);
     } else setNewDraft(true);
-  }, [draftKey, draft, dirty]);
+  }, [draftKey, suggested, dirty]);
 
   const exposure = useMemo(() => detectCodeExposure(text), [text]);
   const unsupported = draft ? (d.verification?.unsupported_sentences ?? []).filter((s) => text.includes(s)) : [];
@@ -484,7 +486,15 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
           <>
             {!draft && (
               <Notice tone="info" title={d.draft_result ? `AI 판단: ${d.draft_result}` : "AI 초안이 아직 없어요"}>
-                {d.run_status === "대기" || d.run_status === "처리 중" ? "AI가 초안을 만드는 중이에요. 직접 작성할 수도 있어요." : "근거를 확인해 직접 작성하거나, AI 재분석을 요청하세요."}
+                {d.run_status === "대기" || d.run_status === "처리 중"
+                  ? "AI가 초안을 만드는 중이에요. 직접 작성할 수도 있어요."
+                  : d.draft_result === "추가 질문 필요"
+                    ? d.additional_question
+                      ? "문의 내용이 부족해 AI가 고객에게 물어볼 질문을 준비했어요. 아래 내용을 확인·수정해서 보내세요."
+                      : `문의 내용이 부족해요${d.analysis?.missing_fields?.length ? ` (부족한 정보: ${d.analysis.missing_fields.join(", ")})` : ""}. 고객에게 필요한 정보를 물어보세요.`
+                    : d.draft_result === "직접 확인 필요"
+                      ? "AI가 근거 문서에서 답을 찾지 못했어요. 사실을 확인해 직접 작성하거나, 문서를 보강한 뒤 재분석을 요청하세요."
+                      : "근거를 확인해 직접 작성하거나, AI 재분석을 요청하세요."}
               </Notice>
             )}
             {draft?.review_reasons && draft.review_reasons.length > 0 && (
@@ -502,7 +512,7 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
                 <button
                   className="font-medium underline underline-offset-2"
                   onClick={() => {
-                    setText(draft?.answer_text ?? "");
+                    setText(suggested);
                     setDirty(false);
                     setNewDraft(false);
                   }}
@@ -521,21 +531,21 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
                 }}
                 rows={8}
                 maxLength={10000}
-                placeholder={draft ? "" : "답변을 직접 작성하세요"}
+                placeholder={draft ? "" : d.draft_result === "추가 질문 필요" ? "고객에게 물어볼 내용을 작성하세요" : "답변을 직접 작성하세요"}
                 className={cn(
                   "w-full resize-y rounded-lg border bg-white px-3.5 py-3 text-[14px] leading-relaxed text-zinc-900 outline-none transition focus:ring-4",
                   exposure.length ? "border-red-300 focus:ring-red-100" : "border-zinc-200 focus:border-zinc-400 focus:ring-zinc-100",
                 )}
               />
-              {dirty && draft && (
+              {dirty && suggested && (
                 <button
                   onClick={() => {
-                    setText(draft.answer_text);
+                    setText(suggested);
                     setDirty(false);
                   }}
                   className="absolute bottom-3 right-3 flex items-center gap-1 rounded-md bg-white/90 px-2 py-1 text-[11.5px] text-zinc-500 ring-1 ring-zinc-200 hover:text-zinc-900"
                 >
-                  <Undo2 className="size-3" /> 원래 초안
+                  <Undo2 className="size-3" /> {draft ? "원래 초안" : "AI 추천 질문"}
                 </button>
               )}
             </div>
@@ -566,7 +576,7 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <p className="mr-auto text-[12px] text-zinc-500">
                 <Lock className="mr-1 inline size-3" />
-                {draft ? `초안 ${draft.draft_id} (rev ${draft.revision}) 기반` : "직접 작성"} · 담당자 승인 후에만 발송돼요
+                {draft ? `초안 ${draft.draft_id} (rev ${draft.revision}) 기반` : d.additional_question && text === d.additional_question ? "AI 추천 질문" : "직접 작성"} · 담당자 승인 후에만 발송돼요
               </p>
               <Button onClick={send} loading={busy} disabled={!text.trim() || exposure.length > 0}>
                 <Send className="size-3.5" /> 승인·발송
@@ -584,20 +594,25 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
 
 /** 서버 자동 응대 정책 결과 */
 function AutoResponseBox({ r }: { r: NonNullable<Detail["automatic_response"]> }) {
+  const autoOff = r.review_reasons.includes("AUTO_RESPONSE_DISABLED");
   const text =
     r.delivery_action === "자동 답변 전송"
       ? "자동 응대 정책에 따라 AI가 고객에게 답변을 발송했어요."
       : r.delivery_action === "추가 질문 전송"
         ? "정보가 부족해 AI가 고객에게 추가 질문을 자동 발송했어요."
-        : "AI 결과가 불명확해 담당자 검토로 넘어왔어요.";
+        : autoOff
+          ? "자동 응대가 꺼져 있어 AI가 고객에게 직접 보내지 않았어요. 아래 내용을 확인하고 담당자가 발송해 주세요."
+          : "AI가 확신하지 못해 담당자 검토로 넘어왔어요. 아래 사유를 확인해 주세요.";
   return (
     <Notice tone={r.requires_review ? "warn" : "info"} icon={<Bot className="size-4" />} title={`AI 자동 응대 · ${r.delivery_action}`}>
       {text}
       {r.review_reasons.length > 0 && (
         <ul className="mt-1 list-disc space-y-0.5 pl-4">
-          {r.review_reasons.map((x) => (
-            <li key={x}>{reviewReasonLabel(x)}</li>
-          ))}
+          {r.review_reasons
+            .filter((x) => x !== "AUTO_RESPONSE_DISABLED")
+            .map((x) => (
+              <li key={x}>{reviewReasonLabel(x)}</li>
+            ))}
         </ul>
       )}
       <p className="mt-1 font-mono text-[11px] opacity-60">
@@ -615,6 +630,7 @@ function VerificationBox({ v }: { v: NonNullable<Detail["verification"]> }) {
         <ShieldAlert className="size-4 text-zinc-400" />
         <span className="text-[12.5px] font-medium text-zinc-700">검수 결과</span>
         <Badge className={CHECK_TONE[v.status]}>{v.status}</Badge>
+        {v.status === "미실행" && <span className="text-[12px] text-zinc-500">초안이 없어 검수하지 않았어요</span>}
       </div>
       {v.reasons && v.reasons.length > 0 && (
         <ul className="mt-1.5 list-disc space-y-0.5 pl-6 text-[12.5px] text-zinc-600">
