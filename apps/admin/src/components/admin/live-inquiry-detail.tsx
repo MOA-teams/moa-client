@@ -73,6 +73,11 @@ const CHECK_TONE: Record<CheckStatus, string> = {
 
 type Detail = InquiryDetailResponse;
 
+/** 초안·추천 질문이 없을 때 채우는 답변 틀 — 사실은 담당자가 확인해 채우고, 표시가 남아 있으면 발송 차단 */
+const FILL_MARK = "[확인한 내용을 여기에 작성하세요]";
+const answerTemplate = (summary?: string) =>
+  `안녕하세요, 싱크노트입니다.\n문의 주셔서 감사합니다.\n\n${FILL_MARK}${summary ? `\n(문의 요약: ${summary})` : ""}\n\n추가로 궁금하신 점이 있으면 편하게 말씀해 주세요.`;
+
 /** 실패한 변경 요청의 키·본문 보관 → 같은 내용 재시도는 같은 Idempotency-Key */
 function useIdem<B>() {
   const ref = useRef<{ key: string; body: B } | null>(null);
@@ -420,14 +425,15 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
   const draft = d.draft;
   const answered = (d.answers?.length ?? 0) > 0;
   const closed = d.status === "상담 종료";
-  // 초안이 없고 AI가 추가 질문을 준비했으면 그 질문을 답변 칸에 채움
-  const suggested = draft?.answer_text ?? d.additional_question ?? "";
+  // 우선순위: AI 초안 → AI 추천 질문 → 답변 틀(AI 분석이 끝났는데 둘 다 없을 때)
+  const analysisDone = d.run_status === "완료" || d.run_status === "실패";
+  const suggested = draft?.answer_text ?? d.additional_question ?? (analysisDone ? answerTemplate(d.analysis?.summary) : "");
   const [text, setText] = useState(suggested);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<Err>(null);
   const [newDraft, setNewDraft] = useState(false);
-  const draftKey = draft ? `${draft.draft_id}:${draft.revision}` : d.additional_question ? `q:${d.additional_question}` : null;
+  const draftKey = draft ? `${draft.draft_id}:${draft.revision}` : d.additional_question ? `q:${d.additional_question}` : analysisDone ? `t:${d.latest_run_id}` : null;
   const shownKey = useRef(draftKey);
   const idem = useIdem<AnswerBody>();
 
@@ -442,6 +448,7 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
   }, [draftKey, suggested, dirty]);
 
   const exposure = useMemo(() => detectCodeExposure(text), [text]);
+  const hasFillMark = text.includes(FILL_MARK) || /\(문의 요약: /.test(text);
   const unsupported = draft ? (d.verification?.unsupported_sentences ?? []).filter((s) => text.includes(s)) : [];
 
   async function send() {
@@ -545,7 +552,7 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
                   }}
                   className="absolute bottom-3 right-3 flex items-center gap-1 rounded-md bg-white/90 px-2 py-1 text-[11.5px] text-zinc-500 ring-1 ring-zinc-200 hover:text-zinc-900"
                 >
-                  <Undo2 className="size-3" /> {draft ? "원래 초안" : "AI 추천 질문"}
+                  <Undo2 className="size-3" /> {draft ? "원래 초안" : d.additional_question ? "AI 추천 질문" : "답변 틀"}
                 </button>
               )}
             </div>
@@ -571,6 +578,12 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
                 ))}
               </Notice>
             )}
+            {hasFillMark && (
+              <p className="flex items-center gap-1.5 text-[12.5px] text-amber-700">
+                <AlertTriangle className="size-3.5" />
+                {FILL_MARK} 표시와 &lsquo;(문의 요약: …)&rsquo; 줄을 확인한 내용으로 바꿔야 발송할 수 있어요.
+              </p>
+            )}
             {err && <ErrLine err={err} />}
 
             <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -578,7 +591,7 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
                 <Lock className="mr-1 inline size-3" />
                 {draft ? `초안 ${draft.draft_id} (rev ${draft.revision}) 기반` : d.additional_question && text === d.additional_question ? "AI 추천 질문" : "직접 작성"} · 담당자 승인 후에만 발송돼요
               </p>
-              <Button onClick={send} loading={busy} disabled={!text.trim() || exposure.length > 0}>
+              <Button onClick={send} loading={busy} disabled={!text.trim() || exposure.length > 0 || hasFillMark}>
                 <Send className="size-3.5" /> 승인·발송
               </Button>
             </div>
