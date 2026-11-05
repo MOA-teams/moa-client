@@ -46,7 +46,7 @@ export function Badge({ className, children, ...rest }: HTMLAttributes<HTMLSpanE
     <span
       {...rest}
       className={cn(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11.5px] font-medium ring-1 ring-inset",
+        "inline-flex items-center justify-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11.5px] font-medium ring-1 ring-inset",
         className ?? "bg-zinc-100 text-zinc-700 ring-zinc-500/15",
       )}
     >
