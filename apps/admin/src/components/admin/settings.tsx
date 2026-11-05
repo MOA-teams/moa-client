@@ -8,6 +8,7 @@ import { SECURITY_LEVELS } from "@moa/shared/labels";
 import type { SecurityLevel, Settings } from "@moa/shared/types";
 import { cn, formatDateTime } from "@moa/shared/utils";
 import { Badge, Button, Card, CardHeader, LoadingBlock, Notice, PageHeader, Toggle } from "@moa/ui";
+import { GitHubIntegrationCard } from "./github-integration";
 
 const BASE_EXCLUDES = [".env*", "*.pem", "*.key", "secrets/", "config/prod*"];
 
@@ -67,9 +68,11 @@ export function SettingsView() {
       />
 
       <div className="grid gap-5 xl:grid-cols-2">
+        <GitHubIntegrationCard />
+        <p className="-mb-2 mt-3 text-[12.5px] font-semibold text-zinc-500 xl:col-span-2">데모 시나리오 설정 (합성 데이터 · push 시뮬레이션용)</p>
         {/* 보안 레벨 */}
         <Card className="xl:col-span-2">
-          <CardHeader title="코드 보안 레벨" desc="보안과 분석 성능은 트레이드오프예요. 프로젝트에 맞는 레벨을 고르세요." icon={<ShieldCheck className="size-4" />} />
+          <CardHeader title="코드 보안 레벨 (데모)" desc="보안과 분석 성능은 트레이드오프예요. 프로젝트에 맞는 레벨을 고르세요." icon={<ShieldCheck className="size-4" />} />
           <div className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-4">
             {SECURITY_LEVELS.map((l) => {
               const active = form.securityLevel === l.level;
@@ -114,7 +117,7 @@ export function SettingsView() {
         {/* GitHub */}
         <Card>
           <CardHeader
-            title="GitHub 연동"
+            title="GitHub 연동 (데모)"
             desc={data.system.codeIndexed ? "코드 인덱스 활성 · 감시 경로만 인덱싱" : "코드 인덱스 없음"}
             icon={<GitBranch className="size-4" />}
           />

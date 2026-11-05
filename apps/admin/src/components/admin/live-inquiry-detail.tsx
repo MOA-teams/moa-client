@@ -12,6 +12,7 @@ import {
   Code2,
   History,
   Link2,
+  LogOut,
   Lock,
   MessageSquareText,
   Monitor,
@@ -34,6 +35,8 @@ import {
   adminInquiryApi,
   inquiryErrorMessage,
   newIdempotencyKey,
+  reviewReasonLabel,
+  VERIFICATION_CHECK_LABEL,
   type AnswerBody,
   type BackendCategory,
   type BackendMessage,
@@ -45,7 +48,8 @@ import {
 } from "@moa/shared/inquiry";
 import { useCursorMessages } from "@moa/shared/use-cursor-messages";
 import { cn, formatDateTime, formatTime, pct } from "@moa/shared/utils";
-import { Badge, Button, Card, CardHeader, LoadingBlock, Notice, RemoteAttachment, Select } from "@moa/ui";
+import { Badge, Button, Card, CardHeader, LoadingBlock, Notice, RemoteAttachment, RichText, Select } from "@moa/ui";
+import { useReadReceipt } from "@moa/shared/use-read-receipt";
 import { LIVE_STATUS_TONE, URGENCY_TONE } from "./live-inbox";
 
 const SENDER = {
@@ -93,6 +97,9 @@ export function LiveInquiryDetail({ id }: { id: string }) {
   const { messages, latest: d, error, poke } = useCursorMessages(id, (iid, cursor) => adminInquiryApi.detail(iid, cursor));
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // 담당자가 화면을 보고 있을 때 마지막 메시지까지 읽음 처리 → 고객 화면 '읽음'
+  useReadReceipt(d ? id : null, messages.length ? messages[messages.length - 1].message_id : null, adminInquiryApi.read);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages.length]);
@@ -126,9 +133,11 @@ export function LiveInquiryDetail({ id }: { id: string }) {
         <span className="ml-auto text-[12.5px] text-zinc-400">접수 {formatDateTime(d.created_at)}</span>
       </div>
 
+      {d.customer_presence && !closed && <PresenceBar p={d.customer_presence} />}
+
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         <div className="space-y-5">
-          <Conversation messages={messages} scrollRef={scrollRef} />
+          <Conversation messages={messages} scrollRef={scrollRef} customerReadId={d.customer_last_read_message_id ?? null} />
           <EnvCard d={d} />
         </div>
         <div className="space-y-5">
@@ -142,14 +151,49 @@ export function LiveInquiryDetail({ id }: { id: string }) {
   );
 }
 
+/* ------------------------------- 고객 상태 ------------------------------- */
+
+function PresenceBar({ p }: { p: NonNullable<Detail["customer_presence"]> }) {
+  if (p.status === "나감") {
+    return (
+      <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+        <LogOut className="size-4" />
+        <span className="font-semibold">고객이 상담을 나갔어요</span>
+        {p.left_at && <span className="text-amber-700">· {formatDateTime(p.left_at)}</span>}
+        {p.left_reason && <span className="text-amber-700">· {p.left_reason === "new_chat" ? "새 상담을 시작함" : "창을 닫음"}</span>}
+        <span className="ml-auto text-[12px] text-amber-700">답변을 보내면 고객이 돌아왔을 때 확인하고, 알림을 받아요</span>
+      </div>
+    );
+  }
+  return (
+    <div className="mb-5 flex items-center gap-2 text-[12.5px] text-emerald-700">
+      <span className="relative flex size-2">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+        <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+      </span>
+      고객 상담 중 · 고객이 나가거나 새 상담을 시작하면 여기에 표시돼요
+    </div>
+  );
+}
+
 /* --------------------------------- 대화 --------------------------------- */
 
-function Conversation({ messages, scrollRef }: { messages: BackendMessage[]; scrollRef: React.RefObject<HTMLDivElement | null> }) {
+function Conversation({
+  messages,
+  scrollRef,
+  customerReadId,
+}: {
+  messages: BackendMessage[];
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  customerReadId: string | null;
+}) {
+  // 고객이 읽은 위치까지의 담당자·자동 메시지에 '읽음'
+  const readUpTo = customerReadId ? messages.findIndex((m) => m.message_id === customerReadId) : -1;
   return (
     <Card>
       <CardHeader title="대화" desc={`메시지 ${messages.length}건 · 3초마다 새 메시지 확인`} icon={<MessageSquareText className="size-4" />} />
       <div ref={scrollRef} className="scrollbar-thin max-h-[560px] space-y-4 overflow-y-auto px-5 py-5">
-        {messages.map((m) => {
+        {messages.map((m, idx) => {
           const s = SENDER[m.sender];
           const mine = m.sender === "customer";
           return (
@@ -161,8 +205,13 @@ function Conversation({ messages, scrollRef }: { messages: BackendMessage[]; scr
                 <p className="mb-1 text-[11.5px] text-zinc-500">
                   {s.label}
                   {m.message_type !== "고객 메시지" && ` · ${m.message_type}`} · {formatTime(m.sent_at)}
+                  {!mine && readUpTo >= 0 && idx <= readUpTo && <span className="ml-1 font-medium text-indigo-600">· 읽음</span>}
                 </p>
-                {m.text && <div className={cn("inline-block whitespace-pre-line rounded-xl px-3.5 py-2.5 text-left text-[13.5px] leading-relaxed", s.bubble)}>{m.text}</div>}
+                {m.text && (
+                  <div className={cn("inline-block rounded-xl px-3.5 py-2.5 text-left text-[13.5px] leading-relaxed", s.bubble)}>
+                    {mine ? <span className="whitespace-pre-line">{m.text}</span> : <RichText text={m.text} />}
+                  </div>
+                )}
                 {m.attachments && m.attachments.length > 0 && (
                   <div className={cn("mt-2 flex flex-wrap gap-2", !mine && "justify-end")}>
                     {m.attachments.map((a) => (
@@ -442,7 +491,7 @@ function AnswerCard({ d, onChange }: { d: Detail; onChange: () => void }) {
               <Notice tone="warn" icon={<AlertCircle className="size-4" />} title="직접 확인 필요">
                 <ul className="list-disc space-y-0.5 pl-4">
                   {draft.review_reasons.map((r) => (
-                    <li key={r}>{r}</li>
+                    <li key={r}>{reviewReasonLabel(r)}</li>
                   ))}
                 </ul>
               </Notice>
@@ -547,7 +596,7 @@ function AutoResponseBox({ r }: { r: NonNullable<Detail["automatic_response"]> }
       {r.review_reasons.length > 0 && (
         <ul className="mt-1 list-disc space-y-0.5 pl-4">
           {r.review_reasons.map((x) => (
-            <li key={x}>{x}</li>
+            <li key={x}>{reviewReasonLabel(x)}</li>
           ))}
         </ul>
       )}
@@ -570,9 +619,22 @@ function VerificationBox({ v }: { v: NonNullable<Detail["verification"]> }) {
       {v.reasons && v.reasons.length > 0 && (
         <ul className="mt-1.5 list-disc space-y-0.5 pl-6 text-[12.5px] text-zinc-600">
           {v.reasons.map((r) => (
-            <li key={r}>{r}</li>
+            <li key={r}>{reviewReasonLabel(r)}</li>
           ))}
         </ul>
+      )}
+      {v.checks && Object.keys(v.checks).length > 0 && (
+        <div className="mt-2 grid gap-1 sm:grid-cols-2">
+          {Object.entries(v.checks).map(([k, val]) => {
+            const st = String(val) as CheckStatus;
+            return (
+              <div key={k} className="flex items-center justify-between gap-2 rounded-md bg-zinc-50 px-2.5 py-1.5 text-[12px]">
+                <span className="truncate text-zinc-600">{VERIFICATION_CHECK_LABEL[k] ?? k}</span>
+                <Badge className={CHECK_TONE[st] ?? undefined}>{st}</Badge>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -663,7 +725,9 @@ function SentAnswer({ a }: { a: NonNullable<Detail["answers"]>[number] }) {
         {a.agent_edit_ratio !== null && <Badge className="bg-indigo-50 text-indigo-700 ring-indigo-600/15">초안 대비 수정량 {pct(a.agent_edit_ratio)}</Badge>}
         <span className="ml-auto text-[11.5px] text-zinc-400">{formatDateTime(a.answered_at)}</span>
       </div>
-      <p className="whitespace-pre-line px-4 py-3 text-[13.5px] leading-relaxed text-zinc-800">{a.answer_text}</p>
+      <div className="px-4 py-3 text-[13.5px] leading-relaxed text-zinc-800">
+        <RichText text={a.answer_text} />
+      </div>
       {((a.evidence.docs?.length ?? 0) > 0 || (a.evidence.code?.length ?? 0) > 0) && (
         <div className="flex flex-wrap gap-1.5 border-t border-zinc-100 px-4 py-2.5">
           {a.evidence.docs?.map((x) => (

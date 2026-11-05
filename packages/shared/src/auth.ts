@@ -86,6 +86,8 @@ export interface RequestInit2 {
   /** multipart 본문 (Content-Type은 브라우저가 지정) */
   form?: FormData;
   headers?: Record<string, string>;
+  /** 페이지를 떠나도 요청 유지 (창 닫힘 기록용) */
+  keepalive?: boolean;
 }
 
 async function raw<T>(path: string, init: RequestInit2 & { token?: string } = {}): Promise<T> {
@@ -101,6 +103,7 @@ async function raw<T>(path: string, init: RequestInit2 & { token?: string } = {}
         ...init.headers,
       },
       body: init.form ?? (init.body !== undefined ? JSON.stringify(init.body) : undefined),
+      keepalive: init.keepalive,
     });
   } catch {
     throw new AuthApiError(0, "NETWORK_ERROR", "서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.");

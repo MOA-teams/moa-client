@@ -24,7 +24,8 @@ import { CATEGORIES, CATEGORY_LABEL } from "@moa/shared/labels";
 import type { Category, Message } from "@moa/shared/types";
 import { ADMIN_URL } from "@moa/shared/urls";
 import { cn, formatBytes, formatTime } from "@moa/shared/utils";
-import { RemoteAttachment } from "@moa/ui";
+import { RemoteAttachment, RichText } from "@moa/ui";
+import { useReadReceipt } from "@moa/shared/use-read-receipt";
 import { NotifyPrompt, useAnswerNotifier } from "./answer-notifier";
 import { initialEnv, loginHref, readEntry, type EntryInfo } from "./entry";
 import { useInquiryChat } from "./use-inquiry-chat";
@@ -122,6 +123,33 @@ export function CustomerChat() {
   const messages = useMemo(() => chat.messages.map(toMessage), [chat.messages]);
   const rawById = useMemo(() => new Map(chat.messages.map((m) => [m.message_id, m])), [chat.messages]);
   useAnswerNotifier(inquiryId, messages);
+
+  // 담당자가 읽은 위치까지의 내 메시지에 '읽음'
+  const msgIndex = useMemo(() => new Map(messages.map((m, i) => [m.id, i])), [messages]);
+  const agentRead = chat.latest?.agent_last_read_message_id ?? null;
+  const readUpTo = agentRead ? (msgIndex.get(agentRead) ?? -1) : -1;
+
+  // 화면을 보고 있을 때 마지막 메시지까지 읽음 처리
+  useReadReceipt(inquiryId, messages.length ? messages[messages.length - 1].id : null, inquiryApi.read);
+
+  // 상담 이탈·복귀 기록: 들어오면 returned, 창을 닫으면 left (keepalive)
+  const presenceId = chat.status && chat.status !== "상담 종료" ? inquiryId : null;
+  useEffect(() => {
+    if (!presenceId) return;
+    inquiryApi.sessionEvent(presenceId, "returned").catch(() => {});
+    const onHide = () => {
+      inquiryApi.sessionEvent(presenceId, "left", { keepalive: true }).catch(() => {});
+    };
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted) inquiryApi.sessionEvent(presenceId, "returned").catch(() => {});
+    };
+    window.addEventListener("pagehide", onHide);
+    window.addEventListener("pageshow", onShow);
+    return () => {
+      window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("pageshow", onShow);
+    };
+  }, [presenceId]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -221,7 +249,14 @@ export function CustomerChat() {
     }
   }
 
+  function leaveAndLogout() {
+    if (inquiryId && chat.status !== "상담 종료") inquiryApi.sessionEvent(inquiryId, "left", { keepalive: true }).catch(() => {});
+    logout();
+  }
+
   function newChat() {
+    // 담당자에게 '새 상담을 시작해 나감'으로 표시
+    if (inquiryId && chat.status !== "상담 종료") inquiryApi.sessionEvent(inquiryId, "new_chat").catch(() => {});
     writeStored(storageKey, null);
     pendingCreate.current = null;
     pendingMessage.current = null;
@@ -248,7 +283,7 @@ export function CustomerChat() {
           email={user?.email}
           onNewChat={newChat}
           onLogout={() => {
-            logout();
+            leaveAndLogout();
             router.replace(loginHref("/login", "/chat"));
           }}
         />
@@ -272,7 +307,7 @@ export function CustomerChat() {
               )}
               <button
                 onClick={() => {
-                  logout();
+                  leaveAndLogout();
                   router.replace(loginHref("/login", "/chat"));
                 }}
                 className="grid size-7 place-items-center rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
@@ -336,7 +371,7 @@ export function CustomerChat() {
           )}
 
           {messages.map((m) => (
-            <MessageItem key={m.id} m={m} attachments={rawById.get(m.id)?.attachments ?? []} />
+            <MessageItem key={m.id} m={m} attachments={rawById.get(m.id)?.attachments ?? []} read={m.role === "customer" && readUpTo >= 0 && msgIndex.get(m.id)! <= readUpTo} />
           ))}
 
           {chat.error && chat.error.code !== "INQUIRY_NOT_FOUND" && (
@@ -674,7 +709,7 @@ function BotBubble({ children, label, time }: { children: React.ReactNode; label
   );
 }
 
-function MessageItem({ m, attachments }: { m: Message; attachments: AttachmentMeta[] }) {
+function MessageItem({ m, attachments, read }: { m: Message; attachments: AttachmentMeta[]; read?: boolean }) {
   const time = formatTime(m.createdAt);
   if (m.role === "customer") {
     return (
@@ -687,13 +722,16 @@ function MessageItem({ m, attachments }: { m: Message; attachments: AttachmentMe
             ))}
           </div>
         )}
-        <p className="mt-1 text-[10.5px] text-zinc-400">{time}</p>
+        <p className="mt-1 text-[10.5px] text-zinc-400">
+          {read && <span className="mr-1 font-medium text-indigo-600">읽음</span>}
+          {time}
+        </p>
       </div>
     );
   }
   return (
     <BotBubble label={m.role === "ai" ? (m.kind === "info_request" ? "자동 안내 · 정보 요청" : m.kind === "answer" ? "자동 답변" : "자동 안내") : "상담원"} time={time}>
-      {m.text}
+      <RichText text={m.text} />
     </BotBubble>
   );
 }

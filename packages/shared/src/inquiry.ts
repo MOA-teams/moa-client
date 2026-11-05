@@ -71,8 +71,19 @@ export interface FeedbackResponse {
   recorded_at: string;
 }
 
+/** 고객 상담 이탈 상태 (담당자 상세) */
+export interface CustomerPresence {
+  status: "상담 중" | "나감";
+  left_at: string | null;
+  left_reason: "left" | "new_chat" | null;
+}
+
+export type SessionEventType = "left" | "new_chat" | "returned";
+
 export interface InquiryChatResponse {
   inquiry_id: string;
+  /** 담당자들이 읽은 가장 뒤의 메시지 ID (고객 화면 '읽음' 표시용) */
+  agent_last_read_message_id?: string | null;
   status: BackendStatus;
   messages: BackendMessage[];
   next_cursor: string;
@@ -172,6 +183,18 @@ export const inquiryApi = {
   /** 종료된 본인 상담의 최초 평가 (한 번만) */
   feedback: (inquiryId: string, body: FeedbackBody, key: string) =>
     withRetry(() => authed<FeedbackResponse>(`/api/v1/inquiries/${enc(inquiryId)}/feedback`, { method: "POST", body, headers: idem(key) })),
+
+  /** 고객 읽음 위치 기록 (앞으로만 이동, Idempotency-Key 불필요) */
+  read: (inquiryId: string, lastReadMessageId: string) =>
+    authed<{ last_read_message_id: string }>(`/api/v1/inquiries/${enc(inquiryId)}/read`, { method: "POST", body: { last_read_message_id: lastReadMessageId } }),
+
+  /** 상담 이탈·복귀 기록. 창 닫힘(left)은 keepalive로 보내 페이지를 떠나도 전송 */
+  sessionEvent: (inquiryId: string, type: SessionEventType, opts: { keepalive?: boolean } = {}) =>
+    authed<{ customer_presence: CustomerPresence }>(`/api/v1/inquiries/${enc(inquiryId)}/session-events`, {
+      method: "POST",
+      body: { type },
+      keepalive: opts.keepalive,
+    }),
 
   upload: (file: File, purpose: "inquiry" | "document" = "inquiry") => {
     const form = new FormData();
@@ -280,6 +303,9 @@ export interface AutomaticResponseView {
 
 export interface InquiryDetailResponse extends InquiryChatResponse {
   automatic_response?: AutomaticResponseView | null;
+  /** 고객이 읽은 마지막 메시지 ID (담당자 화면 '읽음' 표시용) */
+  customer_last_read_message_id?: string | null;
+  customer_presence?: CustomerPresence;
   backend_knowledge_revision: number;
   answers?: AnswerAudit[];
   tenant_id: string;
@@ -338,6 +364,10 @@ export const adminInquiryApi = {
     if (cursor) q.set("cursor", cursor);
     return authed<InquiryDetailResponse>(`/api/v1/admin/inquiries/${enc(inquiryId)}?${q}`);
   },
+
+  /** 담당자 읽음 위치 기록 (문의별 공통, 앞으로만 이동) */
+  read: (inquiryId: string, lastReadMessageId: string) =>
+    authed<{ last_read_message_id: string }>(`/api/v1/admin/inquiries/${enc(inquiryId)}/read`, { method: "POST", body: { last_read_message_id: lastReadMessageId } }),
 
   /** AI 재분석 요청 (고객 자동 발송 없음) */
   analyze: (inquiryId: string, body: { expected_inquiry_revision: number; based_on_message_id: string; review_only?: boolean }, key: string) =>
@@ -437,6 +467,87 @@ export const documentApi = {
     ),
 };
 
+/* ------------------------------- GitHub 연동 ------------------------------- */
+
+export interface AuthorizedRepository {
+  installation_id: number;
+  repository_id: number;
+  repository: string;
+  default_branch: string;
+}
+
+export interface GitHubStatus {
+  integration_id: string;
+  status: string;
+  installation_id: number | null;
+  repository: string | null;
+  watch_branch: string;
+  security_level: number;
+  include_paths: string[];
+  exclude_patterns: string[];
+  document_bindings: Array<{ path: string; doc_id: string }>;
+  analysis_provider: "external_llm" | "none";
+  last_synced_sha: string | null;
+  last_synced_at: string | null;
+  error_code: string | null;
+  report: Record<string, unknown>;
+}
+
+export interface GitHubConnectBody {
+  authorization_id?: string | null;
+  installation_id?: number | null;
+  repository?: string | null;
+  watch_branch?: string;
+  /** 0: 연동 안 함 · 1: 메타데이터만 · 2: 경로 제한 코드 (3은 미지원) */
+  security_level: 0 | 1 | 2;
+  include_paths?: string[];
+  exclude_patterns?: string[];
+  document_bindings?: Array<{ path: string; doc_id: string }>;
+}
+
+export const githubApi = {
+  status: () => authed<GitHubStatus>("/api/v1/admin/integrations/github"),
+  /** GitHub App 설치·사용자 인증 시작 → 이동할 URL */
+  start: () => authed<{ authorization_url: string; installation_url: string; expires_in: number }>("/api/v1/admin/integrations/github/authorization", { method: "POST" }),
+  /** GitHub에서 돌아온 state·code로 인증 완료 → 관리 가능한 저장소 목록 */
+  complete: (state: string, code: string) =>
+    authed<{ authorization_id: string; repositories: AuthorizedRepository[]; expires_in: number }>("/api/v1/admin/integrations/github/authorization/complete", {
+      method: "POST",
+      body: { state, code },
+    }),
+  /** branch 생략 → 브랜치 목록, branch 지정 → 해당 sha의 경로 목록 */
+  branches: (authorization_id: string, repository_id: number) =>
+    authed<{ branches: Array<{ name: string; sha: string }> }>("/api/v1/admin/integrations/github/selection", {
+      method: "POST",
+      body: { authorization_id, repository_id },
+    }),
+  paths: (authorization_id: string, repository_id: number, branch: string) =>
+    authed<{ sha: string; paths: string[] }>("/api/v1/admin/integrations/github/selection", {
+      method: "POST",
+      body: { authorization_id, repository_id, branch },
+    }),
+  /** 연동 설정·최초 인덱싱 접수 (admin 전용) */
+  connect: (body: GitHubConnectBody, key: string) =>
+    withRetry(() => authed<{ integration_id: string; status: string }>("/api/v1/admin/integrations/github", { method: "POST", body, headers: idem(key) })),
+};
+
+/* ------------------------------- AI 결과 라벨 ------------------------------- */
+
+/** 서버가 내려주는 검토 사유 코드 → 안내 문구 (모르는 값은 그대로 표시) */
+export const REVIEW_REASON_LABEL: Record<string, string> = {
+  AUTO_RESPONSE_DISABLED: "이 기업은 자동 응대가 꺼져 있어 담당자 검토로 넘어왔어요",
+};
+
+export const VERIFICATION_CHECK_LABEL: Record<string, string> = {
+  source_conflict: "근거 간 충돌 없음",
+  claims_supported: "문장마다 근거 있음",
+  evidence_current: "근거가 최신 버전",
+  auto_response_scope: "자동 응대 허용 범위",
+  internal_data_excluded: "내부 정보(코드 등) 제외",
+};
+
+export const reviewReasonLabel = (code: string) => REVIEW_REASON_LABEL[code] ?? code;
+
 /* ---------------------------------- 오류 ---------------------------------- */
 
 export const INQUIRY_ERROR_MESSAGE: Record<string, string> = {
@@ -470,6 +581,12 @@ export const INQUIRY_ERROR_MESSAGE: Record<string, string> = {
   FORBIDDEN: "이 계정으로는 할 수 없는 작업이에요.",
   VALIDATION_ERROR: "입력한 내용을 다시 확인해 주세요.",
   NETWORK_ERROR: "네트워크가 불안정해요. 다시 시도해 주세요.",
+  MESSAGE_NOT_FOUND: "메시지를 찾을 수 없어요.",
+  GITHUB_NOT_CONFIGURED: "서버에 GitHub 연동 설정이 아직 없어요. 백엔드에서 GitHub App을 설정해야 해요.",
+  GITHUB_UNAVAILABLE: "GitHub에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.",
+  GITHUB_AUTHORIZATION_INVALID: "GitHub 인증이 만료됐거나 올바르지 않아요. 연결을 다시 시작해 주세요.",
+  GITHUB_REPOSITORY_NOT_FOUND: "저장소를 찾을 수 없어요. GitHub App 설치 범위를 확인해 주세요.",
+  GITHUB_REPOSITORY_CONNECTED: "이미 다른 곳에 연결된 저장소예요.",
 };
 
 export function inquiryErrorMessage(e: unknown) {
