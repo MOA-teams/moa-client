@@ -17,7 +17,9 @@ import {
   type BackendStatus,
   type CreateInquiryBody,
   type CustomerInquirySummary,
+  type InquiryChatResponse,
   type InquiryEnv,
+  type ResponseProgressState,
   LIVE_INQUIRY_ID,
 } from "@moa/shared/inquiry";
 import { FeedbackCard } from "./feedback-card";
@@ -81,6 +83,72 @@ function toMessage(m: BackendMessage): Message {
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
+/**
+ * 화면에 쓸 진행 상태. 서버 response_progress가 기준이고 프론트는 추정하지 않는다.
+ * - 방금 보낸 메시지(expected)를 서버가 아직 반영하지 않았으면 이전 결과 대신 analyzing
+ * - 기준 고객 메시지가 아직 로드되지 않았거나 알고 있는 최신 고객 메시지보다 이전 기준이면 활성 상태로 쓰지 않음
+ * - 최신 여부는 누적 메시지의 서버 순서로 판단 (ID 숫자 파싱 X)
+ */
+function resolveProgress(
+  inquiryId: string | null,
+  live: InquiryChatResponse | null,
+  raw: BackendMessage[],
+  expected: { inquiryId: string; messageId: string | null } | null,
+): ResponseProgressState | null {
+  if (!inquiryId) return null;
+  const exp = expected?.inquiryId === inquiryId ? expected : null;
+  if (!live) return exp ? "analyzing" : null; // 접수 직후 첫 조회 전
+  if (live.status === "상담 종료") return "closed";
+  const p = live.response_progress;
+  if (!p) return null; // 구버전 응답: status·메시지만 표시
+
+  const order = new Map<string, number>();
+  raw.forEach((m, i) => {
+    if (m.sender === "customer") order.set(m.message_id, i);
+  });
+  const basis = p.based_on_message_id;
+  const basisAt = basis ? order.get(basis) : undefined;
+  if (basis && basisAt === undefined) return exp ? "analyzing" : null;
+
+  if (exp?.messageId) {
+    const mine = order.get(exp.messageId);
+    const caughtUp = basis === exp.messageId || (basisAt !== undefined && mine !== undefined && basisAt > mine);
+    if (!caughtUp) return "analyzing";
+  }
+  if (basisAt !== undefined && basisAt < Math.max(-1, ...order.values())) return null;
+  return p.state;
+}
+
+interface Stage {
+  idx: number;
+  /** 두 번째 단계 이름 (AI 확인 중·담당자 확인 중·추가 정보 필요) */
+  label: string;
+  desc: string;
+  warn: boolean;
+}
+
+const STAGE_DESC = ["문의가 접수됐어요", "문의 내용을 확인하고 있어요", "답변을 확인해 주세요", "상담이 마무리됐어요"];
+
+/** 상단 진행 바·사이드 패널 표시 — response_progress 우선, 없으면 기존 status */
+function stageOf(status: BackendStatus, progress: ResponseProgressState | null): Stage {
+  const base = { label: "확인 중", warn: false };
+  if (status === "상담 종료" || progress === "closed") return { ...base, idx: 3, desc: STAGE_DESC[3] };
+  switch (progress) {
+    case "analyzing":
+      return { idx: 1, label: "AI 확인 중", desc: "AI가 문의 내용을 확인하고 있어요", warn: false };
+    case "awaiting_customer":
+      return { idx: 1, label: "추가 정보 필요", desc: "요청한 정보를 채팅으로 보내주세요", warn: true };
+    case "waiting_agent":
+      return { idx: 1, label: "담당자 확인 중", desc: "담당자에게 전달했어요. 확인 후 답변드릴게요", warn: false };
+    case "answered":
+      return { ...base, idx: 2, desc: STAGE_DESC[2] };
+  }
+  if (status === "추가 정보 필요") return { idx: 1, label: "추가 정보 필요", desc: "요청한 정보를 채팅으로 보내주세요", warn: true };
+  if (status === "담당자 확인 중") return { idx: 1, label: "담당자 확인 중", desc: STAGE_DESC[1], warn: false };
+  const idx = status === "답변 완료" ? 2 : 0;
+  return { ...base, idx, desc: STAGE_DESC[idx] };
+}
+
 interface PendingFile {
   local: string;
   file: File;
@@ -112,6 +180,9 @@ export function CustomerChat() {
   // 실패한 요청의 키·본문 보관 → 같은 내용 재시도는 같은 Idempotency-Key
   const pendingCreate = useRef<{ key: string; body: CreateInquiryBody } | null>(null);
   const pendingMessage = useRef<{ key: string; inquiryId: string; body: AddMessageBody } | null>(null);
+  // 방금 접수된 고객 메시지 기준 — 서버 진행 상태가 이 메시지(또는 더 최신 메시지)를 기준으로 바뀌기 전까지
+  // 이전 메시지의 '답변 완료'·이관 안내를 새 결과처럼 보여주지 않음. messageId null = 새 문의(첫 응답이면 충분)
+  const [expected, setExpected] = useState<{ inquiryId: string; messageId: string | null } | null>(null);
 
   useEffect(() => {
     // 외부(싱크노트)에서 진입 정보와 함께 들어오면 기존 상담에 이어 보내지 않고 새 문의 흐름
@@ -137,6 +208,23 @@ export function CustomerChat() {
     [history.items, inquiryId, chat.status],
   );
   const messages = useMemo(() => chat.messages.map(toMessage), [chat.messages]);
+  // 고정 접수 안내는 화면에서만 숨김 (원본은 cursor·읽음·알림 계산에 그대로 사용)
+  const visibleMessages = useMemo(() => messages.filter((m) => m.kind !== "receipt"), [messages]);
+  // 문의 전환 직후 한 번은 이전 문의의 응답이 남아 있으므로 현재 문의 응답만 사용
+  const live = chat.latest && chat.latest.inquiry_id === inquiryId ? chat.latest : null;
+  const progress = useMemo(() => resolveProgress(inquiryId, live, chat.messages, expected), [inquiryId, live, chat.messages, expected]);
+  const stage = live ? stageOf(live.status, progress) : null;
+
+  // 서버가 analyzing을 오래 유지하면 지연 안내만 추가 (시간 경과로 이관 처리하지 않음)
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (progress !== "analyzing") return;
+    const t = setTimeout(() => setSlow(true), 45_000);
+    return () => {
+      clearTimeout(t);
+      setSlow(false);
+    };
+  }, [progress, expected]);
   const rawById = useMemo(() => new Map(chat.messages.map((m) => [m.message_id, m])), [chat.messages]);
   useAnswerNotifier(inquiryId, messages);
 
@@ -169,7 +257,7 @@ export function CustomerChat() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages.length]);
+  }, [messages.length, progress]);
 
   // 저장된 상담이 없어졌거나 내 것이 아니면(404) 새 상담으로
   useEffect(() => {
@@ -215,6 +303,7 @@ export function CustomerChat() {
     pendingCreate.current = { key, body };
     const r = await inquiryApi.create(body, key);
     pendingCreate.current = null;
+    setExpected({ inquiryId: r.inquiry_id, messageId: null });
     writeStored(storageKey, r.inquiry_id);
     refreshHistory();
     setInquiryId(r.inquiry_id);
@@ -226,8 +315,9 @@ export function CustomerChat() {
     const prev = pendingMessage.current;
     const key = prev && prev.inquiryId === id && same(prev.body, body) ? prev.key : newIdempotencyKey();
     pendingMessage.current = { key, inquiryId: id, body };
-    await inquiryApi.addMessage(id, body, key);
+    const r = await inquiryApi.addMessage(id, body, key);
     pendingMessage.current = null;
+    setExpected({ inquiryId: id, messageId: r.message_id });
     chat.poke();
   }
 
@@ -274,6 +364,7 @@ export function CustomerChat() {
   function resetComposer() {
     pendingCreate.current = null;
     pendingMessage.current = null;
+    setExpected(null);
     setCategory(null);
     setText("");
     setFiles([]);
@@ -310,7 +401,7 @@ export function CustomerChat() {
         {/* 데스크톱 사이드 패널 */}
         <SidePanel
           entry={entry}
-          status={status}
+          stage={stage}
           inquiryId={inquiryId}
           email={user?.email}
           history={historyItems}
@@ -363,7 +454,7 @@ export function CustomerChat() {
               </button>
             </div>
           </div>
-          {status && <StatusBar status={status} />}
+          {stage && <StatusBar stage={stage} />}
           {historyOpen && (
             <div className="mt-3 max-h-[50dvh] overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1.5">
               <HistoryList items={historyItems} activeId={inquiryId} onOpen={openInquiry} more={history.hasMore ? { loading: history.loading, onMore: history.loadMore } : null} />
@@ -375,9 +466,9 @@ export function CustomerChat() {
             <p className="text-[15px] font-semibold text-zinc-900">{!inquiryId ? "새 문의" : closed ? "지난 상담" : "상담 중"}</p>
             <p className="text-[12.5px] text-zinc-500">{inquiryId ? `문의 번호 ${inquiryId}` : "궁금한 점을 남기면 담당자가 확인 후 답변드려요"}</p>
           </div>
-          {status && (
+          {stage && (
             <div className="ml-auto w-[420px]">
-              <StatusBar status={status} />
+              <StatusBar stage={stage} />
             </div>
           )}
         </div>
@@ -420,9 +511,22 @@ export function CustomerChat() {
             </div>
           )}
 
-          {messages.map((m) => (
+          {visibleMessages.map((m) => (
             <MessageItem key={m.id} m={m} attachments={rawById.get(m.id)?.attachments ?? []} read={m.role === "customer" && readUpTo >= 0 && msgIndex.get(m.id)! <= readUpTo} />
           ))}
+
+          {/* 진행 말풍선 — 화면 표시용 (저장·알림 대상 아님) */}
+          {progress === "analyzing" && (
+            <BotBubble label="AI">
+              <TypingDots />
+              {slow && <span className="mt-1 block text-[12px] text-zinc-500">답변을 준비하는 데 시간이 조금 걸리고 있어요. 잠시만 기다려 주세요.</span>}
+            </BotBubble>
+          )}
+          {progress === "waiting_agent" && (
+            <BotBubble>
+              <span role="status">담당자에게 전달했어요. 확인 후 답변드릴게요.</span>
+            </BotBubble>
+          )}
 
           {chat.error && chat.error.code !== "INQUIRY_NOT_FOUND" && (
             <p className="text-center text-[12px] text-zinc-400">대화를 불러오는 중 문제가 생겼어요. 잠시 후 자동으로 다시 시도해요.</p>
@@ -569,17 +673,13 @@ export function CustomerChat() {
 
 /* --------------------------------- 하위 컴포넌트 --------------------------------- */
 
-const SIDE_STEPS: Array<{ key: BackendStatus; desc: string }> = [
-  { key: "접수", desc: "문의가 접수됐어요" },
-  { key: "담당자 확인 중", desc: "담당자가 내용을 확인하고 있어요" },
-  { key: "답변 완료", desc: "답변을 확인해 주세요" },
-  { key: "상담 종료", desc: "상담이 마무리됐어요" },
-];
+const STEPS = ["접수", "확인 중", "답변 완료", "상담 종료"] as const;
+const stepLabel = (stage: Stage, i: number) => (i === 1 ? stage.label : STEPS[i]);
 
 /** 데스크톱·태블릿(md 768px 이상) 왼쪽 패널 — 고객센터 정보·진행 상태·진입 정보·계정 */
 function SidePanel({
   entry,
-  status,
+  stage,
   inquiryId,
   email,
   history,
@@ -589,7 +689,7 @@ function SidePanel({
   onLogout,
 }: {
   entry: EntryInfo;
-  status: BackendStatus | null;
+  stage: Stage | null;
   inquiryId: string | null;
   email?: string;
   history: CustomerInquirySummary[];
@@ -598,8 +698,8 @@ function SidePanel({
   onNewChat: () => void;
   onLogout: () => void;
 }) {
-  const needs = status === "추가 정보 필요";
-  const idx = !status ? -1 : needs ? 1 : SIDE_STEPS.findIndex((s) => s.key === status);
+  const idx = stage?.idx ?? -1;
+  const needs = !!stage?.warn;
   return (
     <aside className="hidden w-[340px] shrink-0 flex-col border-r border-zinc-200/80 bg-white md:flex">
       <div className="flex items-center gap-3 px-7 pb-6 pt-7">
@@ -615,14 +715,14 @@ function SidePanel({
 
         <section>
           <p className="mb-3 text-[12px] font-semibold text-zinc-500">상담 진행</p>
-          {status ? (
+          {stage ? (
             <ol className="relative space-y-4">
-              {SIDE_STEPS.map((s, i) => {
+              {STEPS.map((s, i) => {
                 const active = i === idx;
                 const done = i < idx;
                 return (
-                  <li key={s.key} className="relative flex gap-3">
-                    {i < SIDE_STEPS.length - 1 && <span className={cn("absolute left-[9px] top-6 h-[calc(100%-4px)] w-px", done ? "bg-indigo-600" : "bg-zinc-200")} />}
+                  <li key={s} className="relative flex gap-3">
+                    {i < STEPS.length - 1 && <span className={cn("absolute left-[9px] top-6 h-[calc(100%-4px)] w-px", done ? "bg-indigo-600" : "bg-zinc-200")} />}
                     <span
                       className={cn(
                         "relative z-10 mt-0.5 grid size-[19px] shrink-0 place-items-center rounded-full border-2",
@@ -634,9 +734,9 @@ function SidePanel({
                     </span>
                     <div>
                       <p className={cn("text-[13.5px]", active ? (needs ? "font-semibold text-amber-700" : "font-semibold text-zinc-900") : done ? "text-zinc-700" : "text-zinc-400")}>
-                        {needs && i === 1 ? "추가 정보 필요" : s.key}
+                        {stepLabel(stage, i)}
                       </p>
-                      {active && <p className="mt-0.5 text-[12px] text-zinc-500">{needs ? "요청한 정보를 채팅으로 보내주세요" : s.desc}</p>}
+                      {active && <p className="mt-0.5 text-[12px] text-zinc-500">{stage.desc}</p>}
                     </div>
                   </li>
                 );
@@ -725,11 +825,8 @@ function HistoryList({ items, activeId, onOpen, more }: { items: CustomerInquiry
   );
 }
 
-const STEPS: BackendStatus[] = ["접수", "담당자 확인 중", "답변 완료", "상담 종료"];
-
-function StatusBar({ status }: { status: BackendStatus }) {
-  const needs = status === "추가 정보 필요";
-  const idx = needs ? 1 : STEPS.indexOf(status);
+function StatusBar({ stage }: { stage: Stage }) {
+  const { idx, warn: needs } = stage;
   return (
     <div className="mt-3 flex items-center gap-1.5">
       {STEPS.map((s, i) => {
@@ -739,7 +836,7 @@ function StatusBar({ status }: { status: BackendStatus }) {
           <div key={s} className="flex flex-1 flex-col gap-1">
             <div className={cn("h-1 rounded-full", done ? "bg-indigo-600" : active ? (needs ? "bg-amber-500" : "bg-indigo-600") : "bg-zinc-200")} />
             <span className={cn("text-[11px]", active ? (needs ? "font-semibold text-amber-600" : "font-semibold text-indigo-700") : done ? "text-zinc-500" : "text-zinc-400")}>
-              {needs && i === 1 ? "추가 정보 필요" : s}
+              {stepLabel(stage, i)}
             </span>
           </div>
         );
@@ -811,6 +908,26 @@ function BotBubble({ children, label, time }: { children: React.ReactNode; label
   );
 }
 
+/** AI 처리 중 — 마운트 시 한 번만 안내 (폴링마다 다시 읽지 않음) */
+function TypingDots() {
+  return (
+    <span className="moa-typing" role="status" aria-live="polite">
+      <span className="sr-only">AI가 답변을 준비하고 있어요.</span>
+      {[0, 150, 300].map((delay) => (
+        <span key={delay} aria-hidden="true" className="moa-typing-dot" style={{ animationDelay: `${delay}ms` }} />
+      ))}
+    </span>
+  );
+}
+
+/** 발송 주체 라벨 — sender와 message_type을 함께 보고 결정 (본문 내용으로 추정하지 않음) */
+function senderLabel(m: Message) {
+  if (m.role === "agent") return "담당자 답변";
+  if (m.kind === "info_request") return "AI · 추가 질문";
+  if (m.kind === "answer") return "AI 답변";
+  return "자동 안내";
+}
+
 function MessageItem({ m, attachments, read }: { m: Message; attachments: AttachmentMeta[]; read?: boolean }) {
   const time = formatTime(m.createdAt);
   if (m.role === "customer") {
@@ -832,7 +949,7 @@ function MessageItem({ m, attachments, read }: { m: Message; attachments: Attach
     );
   }
   return (
-    <BotBubble label={m.role === "ai" ? (m.kind === "info_request" ? "자동 안내 · 정보 요청" : m.kind === "answer" ? "자동 답변" : "자동 안내") : "상담원"} time={time}>
+    <BotBubble label={senderLabel(m)} time={time}>
       <RichText text={m.text} />
     </BotBubble>
   );

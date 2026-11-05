@@ -80,6 +80,15 @@ export interface CustomerPresence {
 
 export type SessionEventType = "left" | "new_chat" | "returned";
 
+/** 고객 화면 진행 표시 기준 (AI 확인 중·추가 질문 대기·담당자 이관·답변 도착·종료) */
+export type ResponseProgressState = "idle" | "analyzing" | "awaiting_customer" | "waiting_agent" | "answered" | "closed";
+
+export interface ResponseProgress {
+  state: ResponseProgressState;
+  /** 진행 상태의 기준이 된 최신 고객 메시지 ID (run ID·답변 ID 아님) */
+  based_on_message_id: string | null;
+}
+
 export interface InquiryChatResponse {
   inquiry_id: string;
   /** 담당자들이 읽은 가장 뒤의 메시지 ID (고객 화면 '읽음' 표시용) */
@@ -93,6 +102,8 @@ export interface InquiryChatResponse {
   feedback_requested?: boolean;
   feedback_submitted?: boolean;
   feedback?: FeedbackResponse | null;
+  /** 구버전 응답에는 없을 수 있음 → 없으면 status·메시지만으로 표시 */
+  response_progress?: ResponseProgress | null;
 }
 
 /* ---------------------------------- 고객 ---------------------------------- */

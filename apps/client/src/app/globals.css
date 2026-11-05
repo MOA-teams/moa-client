@@ -50,3 +50,37 @@ body {
 .animate-fade-up {
   animation: fade-up 0.25s ease-out both;
 }
+
+/* AI 처리 중 말풍선 — 점 세 개가 차례로 위아래 */
+.moa-typing {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+  padding-inline: 4px;
+}
+
+.moa-typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #a1a1aa;
+  animation: moa-typing-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes moa-typing-dot {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .moa-typing-dot {
+    animation: none;
+  }
+}
