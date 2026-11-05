@@ -2,7 +2,7 @@
 
 import "@/lib/browser-mock"; // 데모 데이터는 브라우저 안에서 처리
 
-import { Bug, ExternalLink, GitCommitHorizontal, Play, Siren, Sparkles, Users } from "lucide-react";
+import { Bug, GitCommitHorizontal, Play, Siren, Sparkles, Users } from "lucide-react";
 import { GithubIcon as Github } from "@moa/ui";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -13,8 +13,20 @@ import { CATEGORY_LABEL, STATUS_LABEL } from "@moa/shared/labels";
 import type { Settings } from "@moa/shared/types";
 import { cn, formatTime, pct } from "@moa/shared/utils";
 import { Badge, Button, Card, Empty, LoadingBlock, Notice, PageHeader } from "@moa/ui";
+import { LiveGroups } from "./live-groups";
 
 export function GroupsView() {
+  const focus = useSearchParams().get("focus");
+  const [tab, setTab] = useState<"live" | "demo">(() => focus && !/^G-\d{3}$/.test(focus) ? "demo" : "live");
+  return <>
+    <div className="mb-5 flex w-fit gap-1 rounded-lg bg-zinc-200/50 p-1 text-[13px]">
+      {([["live", "실제 문의 그룹"], ["demo", "데모 시나리오"]] as const).map(([key, label]) => <button key={key} onClick={() => setTab(key)} aria-pressed={tab === key} className={cn("rounded-md px-3.5 py-1.5 transition", tab === key ? "bg-white font-medium text-zinc-900 shadow-sm" : "text-zinc-500")}>{label}</button>)}
+    </div>
+    {tab === "live" ? <LiveGroups /> : <DemoGroupsView />}
+  </>;
+}
+
+function DemoGroupsView() {
   const focus = useSearchParams().get("focus");
   const { data, refresh } = usePolling(async () => {
     const [groups, settings] = await Promise.all([adminApi.groups(), adminApi.settings()]);
@@ -53,7 +65,7 @@ export function GroupsView() {
   return (
     <>
       <PageHeader
-        title="문의 그룹"
+        title="문의 그룹 · 데모"
         desc="임베딩 유사도 + 오류 코드·환경 비교로 같은 문의를 묶어요. 기능 오류 그룹이 기준을 넘으면 급증 알림과 GitHub 이슈를 만듭니다."
         action={
           <Button onClick={runSpike} loading={!!running} disabled={!!running}>
@@ -62,6 +74,7 @@ export function GroupsView() {
           </Button>
         }
       />
+      <div className="mb-4"><Notice tone="info" title="데모 시나리오 화면이에요">문의·코드 후보·이슈는 합성 데이터입니다. 이 화면의 이슈 생성은 실제 GitHub에 등록하지 않습니다. 실제 이슈 생성은 ‘실제 문의 그룹’에서 진행해 주세요.</Notice></div>
       {demoError && (
         <div className="mb-4">
           <Notice tone="warn" title="데모 시나리오를 이미 실행했어요">
@@ -203,7 +216,7 @@ function GroupCard({ g, settings, focused, onChange }: { g: GroupView; settings:
               {err && <p className="text-[12.5px] text-red-600">{err}</p>}
               <div>
                 <Button variant="outline" size="sm" onClick={createIssue} loading={busy}>
-                  <Github className="size-3.5" /> GitHub 이슈 만들기
+                  <Github className="size-3.5" /> 데모 이슈 만들기
                 </Button>
               </div>
             </div>
@@ -221,16 +234,11 @@ function IssueCard({ g }: { g: GroupView }) {
       <div className="flex items-start gap-2">
         <Github className="mt-0.5 size-4 text-zinc-700" />
         <div className="min-w-0 flex-1">
-          <a href={issue.url} target="_blank" rel="noreferrer" className="text-[13.5px] font-semibold text-zinc-900 hover:underline">
-            #{issue.number} {issue.title}
-          </a>
+          <p className="text-[13.5px] font-semibold text-zinc-900">데모 #{issue.number} {issue.title}</p>
           <p className="mt-0.5 text-[11.5px] text-zinc-500">
             {issue.auto ? "급증 감지로 자동 생성" : "담당자가 생성"} · {formatTime(issue.createdAt)}
           </p>
         </div>
-        <a href={issue.url} target="_blank" rel="noreferrer" className="text-zinc-400 hover:text-zinc-700" aria-label="GitHub에서 열기">
-          <ExternalLink className="size-4" />
-        </a>
       </div>
 
       <p className="mb-1.5 mt-4 text-[11.5px] font-medium text-zinc-500">의심 코드 위치 후보 (확정 아님)</p>
