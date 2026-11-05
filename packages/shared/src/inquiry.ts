@@ -134,6 +134,94 @@ export const inquiryApi = {
   attachment: (attachmentId: number) => authed<AttachmentWithUrl>(`/api/v1/attachments/${attachmentId}`),
 };
 
+/* ------------------------------ 담당자(agent/admin) ------------------------------ */
+
+export type BackendUrgency = "high" | "normal" | "low";
+
+export interface InquirySummary {
+  inquiry_id: number;
+  title: string;
+  customer_category: BackendCategory;
+  category: BackendCategory | null; // AI 분석 전 null
+  urgency: BackendUrgency | null;
+  status: BackendStatus;
+  created_at: string;
+  processing_stage: null;
+  group_id: null;
+}
+
+export interface InquiryListResponse {
+  items: InquirySummary[];
+  next_cursor: string | null;
+  has_more: boolean;
+}
+
+export interface InquiryDetailResponse extends InquiryChatResponse {
+  tenant_id: string;
+  customer_id: number;
+  source_customer_id: string | null;
+  title: string;
+  revision: number;
+  customer_category: BackendCategory;
+  env: InquiryEnv;
+  category: BackendCategory | null;
+  urgency: BackendUrgency | null;
+  created_at: string;
+  updated_at: string;
+  latest_customer_message_id: number;
+  /** AI 실행·초안·그룹·검수는 아직 null */
+  processing_stage: null;
+  latest_run_id: null;
+  group_id: null;
+  draft: null;
+  verification: null;
+}
+
+export interface AdminListFilter {
+  status?: BackendStatus;
+  category?: BackendCategory;
+  urgency?: BackendUrgency;
+}
+
+export const adminInquiryApi = {
+  list: (filter: AdminListFilter = {}, cursor?: string | null, limit = 20) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (cursor) q.set("cursor", cursor);
+    for (const [k, v] of Object.entries(filter)) if (v) q.set(k, v);
+    return authed<InquiryListResponse>(`/api/v1/admin/inquiries?${q}`);
+  },
+  detail: (inquiryId: number, cursor?: string | null, limit = 50) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (cursor) q.set("cursor", cursor);
+    return authed<InquiryDetailResponse>(`/api/v1/admin/inquiries/${inquiryId}?${q}`);
+  },
+};
+
+/* ---------------------------------- 라벨 ---------------------------------- */
+
+export const BACKEND_CATEGORY_LABEL: Record<BackendCategory, string> = {
+  usage: "이용 방법",
+  account: "계정",
+  billing: "결제",
+  bug: "기능 오류",
+  feature_request: "개선 요청",
+  other: "기타",
+};
+
+export const BACKEND_STATUS_LABEL: Record<BackendStatus, string> = {
+  received: "접수",
+  in_review: "담당자 확인 중",
+  needs_info: "추가 정보 필요",
+  answered: "답변 완료",
+  closed: "상담 종료",
+};
+
+export const BACKEND_URGENCY_LABEL: Record<BackendUrgency, string> = {
+  high: "높음",
+  normal: "보통",
+  low: "낮음",
+};
+
 export const INQUIRY_ERROR_MESSAGE: Record<string, string> = {
   IDEMPOTENCY_CONFLICT: "같은 요청이 다른 내용으로 이미 처리됐어요. 다시 보내 주세요.",
   ATTACHMENT_ALREADY_LINKED: "이미 다른 메시지에 첨부된 파일이에요. 다시 올려 주세요.",

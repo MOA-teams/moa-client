@@ -19,6 +19,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { adminApi, demoApi } from "@moa/shared/api";
+import { adminInquiryApi } from "@moa/shared/inquiry";
 import { usePolling } from "@moa/shared/hooks";
 import { CLIENT_URL } from "@moa/shared/urls";
 import { ROLE_LABEL } from "@moa/shared/auth";
@@ -44,10 +45,11 @@ interface ShellData {
 }
 
 async function loadShell(): Promise<ShellData> {
-  const [alerts, settings, inquiries, reviews, answers, groups] = await Promise.all([
+  const [alerts, settings, live, reviews, answers, groups] = await Promise.all([
     adminApi.alerts(),
     adminApi.settings(),
-    adminApi.inquiries(),
+    // 실제 문의 중 새로 접수된 건 (백엔드)
+    adminInquiryApi.list({ status: "received" }, null, 100).catch(() => null),
     adminApi.reviews(),
     adminApi.answers(),
     adminApi.groups(),
@@ -56,7 +58,7 @@ async function loadShell(): Promise<ShellData> {
     alerts,
     ragMode: settings.ragMode,
     counts: {
-      inbox: inquiries.filter((i) => i.status === "received" || i.status === "in_review").length,
+      inbox: live?.items.length ?? 0,
       reviews: reviews.filter((r) => r.status === "pending").length,
       candidates: answers.filter((a) => a.tier === "candidate").length,
       groups: groups.filter((g) => g.spike).length,

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { adminApi } from "@moa/shared/api";
 import { usePolling } from "@moa/shared/hooks";
+import { LiveInbox } from "./live-inbox";
 import {
   CATEGORIES,
   CATEGORY_LABEL,
@@ -23,6 +24,33 @@ import { Badge, Card, Empty, LoadingBlock, PageHeader, Select } from "@moa/ui";
 type All = "all";
 
 export function InboxView() {
+  const [tab, setTab] = useState<"live" | "demo">("live");
+  return (
+    <>
+      <PageHeader title="문의 인박스" desc="AI가 분류·초안까지 준비하고, 발송은 담당자가 승인합니다." />
+      <div className="mb-5 flex w-fit gap-1 rounded-lg bg-zinc-200/50 p-1 text-[13px]">
+        {(
+          [
+            ["live", "실제 문의"],
+            ["demo", "데모 시나리오"],
+          ] as const
+        ).map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className={cn("rounded-md px-3.5 py-1.5 transition", tab === k ? "bg-white font-medium text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "live" ? <LiveInbox /> : <MockInbox />}
+    </>
+  );
+}
+
+/** 데모 시나리오(mock) — 그룹·급증·push 재검토 장면용 */
+function MockInbox() {
   const { data } = usePolling(async () => {
     const [inquiries, groups] = await Promise.all([adminApi.inquiries(), adminApi.groups()]);
     return { inquiries, groups };
@@ -59,7 +87,7 @@ export function InboxView() {
 
   return (
     <>
-      <PageHeader title="문의 인박스" desc="긴급도순으로 정렬돼요. AI가 분류·초안까지 준비하고, 발송은 담당자가 승인합니다." />
+      <p className="mb-4 text-[12.5px] text-zinc-500">합성 데이터로 데모 장면(분류·초안·그룹·push 재검토)을 보여주는 화면이에요. 긴급도순으로 정렬돼요.</p>
 
       <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
         {stats.map((s) => (

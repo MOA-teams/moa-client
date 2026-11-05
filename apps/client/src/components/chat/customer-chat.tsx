@@ -22,6 +22,7 @@ import { CATEGORIES, CATEGORY_LABEL } from "@moa/shared/labels";
 import type { Category, Message } from "@moa/shared/types";
 import { ADMIN_URL } from "@moa/shared/urls";
 import { cn, formatBytes, formatTime } from "@moa/shared/utils";
+import { RemoteAttachment } from "@moa/ui";
 import { NotifyPrompt, useAnswerNotifier } from "./answer-notifier";
 import { initialEnv, loginHref, readEntry, type EntryInfo } from "./entry";
 import { useInquiryChat } from "./use-inquiry-chat";
@@ -529,50 +530,6 @@ function BotBubble({ children, label, time }: { children: React.ReactNode; label
         {time && <p className="mt-1 text-[10.5px] text-zinc-400">{time}</p>}
       </div>
     </div>
-  );
-}
-
-/** 첨부: 메타데이터만 받으므로 표시·다운로드 직전에 presigned URL 발급 */
-function RemoteAttachment({ a }: { a: AttachmentMeta }) {
-  const isImage = a.mime.startsWith("image/");
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    if (!isImage) return;
-    let alive = true;
-    inquiryApi
-      .attachment(a.attachment_id)
-      .then((r) => alive && setUrl(r.url))
-      .catch(() => alive && setFailed(true));
-    return () => {
-      alive = false;
-    };
-  }, [a.attachment_id, isImage]);
-
-  async function open() {
-    try {
-      const r = await inquiryApi.attachment(a.attachment_id); // 만료됐을 수 있어 매번 새로 발급
-      window.open(r.url, "_blank", "noopener,noreferrer");
-    } catch {
-      setFailed(true);
-    }
-  }
-
-  if (isImage && url && !failed) {
-    return (
-      <button onClick={open} className="block">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={url} alt={a.file_name} onError={() => setFailed(true)} className="max-h-40 max-w-[220px] rounded-xl border border-zinc-200 object-cover" />
-      </button>
-    );
-  }
-  return (
-    <button onClick={open} className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[12px] text-zinc-700">
-      <FileText className={cn("size-4", isImage ? "text-indigo-500" : "text-red-500")} />
-      <span className="max-w-[160px] truncate">{a.file_name}</span>
-      <span className="text-zinc-400">{failed ? "다시 열기" : formatBytes(a.size)}</span>
-    </button>
   );
 }
 
