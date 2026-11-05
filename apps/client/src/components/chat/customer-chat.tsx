@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowUp, ChevronDown, FileText, Link2, LogOut, Monitor, Paperclip, RotateCcw, X } from "lucide-react";
+import { AlertTriangle, ArrowUp, ChevronDown, FileText, History, Link2, LogOut, MessageSquare, Monitor, Paperclip, RotateCcw, X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AuthApiError } from "@moa/shared/auth";
@@ -16,6 +16,7 @@ import {
   type BackendMessage,
   type BackendStatus,
   type CreateInquiryBody,
+  type CustomerInquirySummary,
   type InquiryEnv,
   LIVE_INQUIRY_ID,
 } from "@moa/shared/inquiry";
@@ -23,11 +24,12 @@ import { FeedbackCard } from "./feedback-card";
 import { CATEGORIES, CATEGORY_LABEL } from "@moa/shared/labels";
 import type { Category, Message } from "@moa/shared/types";
 import { ADMIN_URL } from "@moa/shared/urls";
-import { cn, formatBytes, formatTime } from "@moa/shared/utils";
+import { cn, formatBytes, formatDateTime, formatTime } from "@moa/shared/utils";
 import { RemoteAttachment, RichText } from "@moa/ui";
 import { useReadReceipt } from "@moa/shared/use-read-receipt";
 import { NotifyPrompt, useAnswerNotifier } from "./answer-notifier";
 import { initialEnv, loginHref, readEntry, type EntryInfo } from "./entry";
+import { useInquiryHistory } from "./inquiry-history";
 import { useInquiryChat } from "./use-inquiry-chat";
 
 const SERVICE = "싱크노트";
@@ -104,6 +106,7 @@ export function CustomerChat() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<{ msg: string; rid?: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   // 실패한 요청의 키·본문 보관 → 같은 내용 재시도는 같은 Idempotency-Key
@@ -120,6 +123,19 @@ export function CustomerChat() {
   }, [entry, storageKey]);
 
   const chat = useInquiryChat(inquiryId);
+
+  // 지난 상담 목록 (서버 GET /api/v1/inquiries)
+  const history = useInquiryHistory(!!user);
+  const refreshHistory = history.refresh;
+  // 보고 있는 상담의 상태가 바뀌면 목록도 첫 페이지부터 다시 조회
+  useEffect(() => {
+    if (chat.status) refreshHistory();
+  }, [chat.status, refreshHistory]);
+  // 목록의 현재 상담 상태는 3초 폴링 중인 대화 응답이 더 최신
+  const historyItems = useMemo(
+    () => history.items.map((h) => (h.inquiry_id === inquiryId && chat.status ? { ...h, status: chat.status } : h)),
+    [history.items, inquiryId, chat.status],
+  );
   const messages = useMemo(() => chat.messages.map(toMessage), [chat.messages]);
   const rawById = useMemo(() => new Map(chat.messages.map((m) => [m.message_id, m])), [chat.messages]);
   useAnswerNotifier(inquiryId, messages);
@@ -200,6 +216,7 @@ export function CustomerChat() {
     const r = await inquiryApi.create(body, key);
     pendingCreate.current = null;
     writeStored(storageKey, r.inquiry_id);
+    refreshHistory();
     setInquiryId(r.inquiry_id);
     // 생성 성공 후 진입 query 제거 (실패 시에는 유지)
     if (params.toString()) router.replace("/chat", { scroll: false });
@@ -254,18 +271,33 @@ export function CustomerChat() {
     logout();
   }
 
-  function newChat() {
-    // 담당자에게 '새 상담을 시작해 나감'으로 표시
-    if (inquiryId && chat.status !== "상담 종료") inquiryApi.sessionEvent(inquiryId, "new_chat").catch(() => {});
-    writeStored(storageKey, null);
+  function resetComposer() {
     pendingCreate.current = null;
     pendingMessage.current = null;
-    setInquiryId(null);
     setCategory(null);
     setText("");
     setFiles([]);
     setNotice(null);
     setError(null);
+  }
+
+  function newChat() {
+    // 담당자에게 '새 상담을 시작해 나감'으로 표시
+    if (inquiryId && chat.status !== "상담 종료") inquiryApi.sessionEvent(inquiryId, "new_chat").catch(() => {});
+    writeStored(storageKey, null);
+    setInquiryId(null);
+    resetComposer();
+    setHistoryOpen(false);
+  }
+
+  /** 지난 상담 열기 — 진행 중이면 이어서 대화, 종료됐으면 내용 확인 후 새 메시지는 새 문의로 접수 */
+  function openInquiry(id: string) {
+    setHistoryOpen(false);
+    if (id === inquiryId) return;
+    if (inquiryId && chat.status !== "상담 종료") inquiryApi.sessionEvent(inquiryId, "left", { keepalive: true }).catch(() => {});
+    writeStored(storageKey, id);
+    setInquiryId(id);
+    resetComposer();
   }
 
   const status = chat.status;
@@ -281,6 +313,9 @@ export function CustomerChat() {
           status={status}
           inquiryId={inquiryId}
           email={user?.email}
+          history={historyItems}
+          historyMore={history.hasMore ? { loading: history.loading, onMore: history.loadMore } : null}
+          onOpenInquiry={openInquiry}
           onNewChat={newChat}
           onLogout={() => {
             leaveAndLogout();
@@ -300,6 +335,16 @@ export function CustomerChat() {
               </div>
             </div>
             <div className="flex items-center gap-0.5">
+              {historyItems.length > 0 && (
+                <button
+                  onClick={() => setHistoryOpen((v) => !v)}
+                  className={cn("flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-zinc-500 hover:bg-zinc-100", historyOpen && "bg-zinc-100 text-zinc-800")}
+                  aria-expanded={historyOpen}
+                  title="지난 상담"
+                >
+                  <History className="size-3.5" /> 기록
+                </button>
+              )}
               {inquiryId && (
                 <button onClick={newChat} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-zinc-500 hover:bg-zinc-100" title="새 상담">
                   <RotateCcw className="size-3.5" /> 새 상담
@@ -319,10 +364,15 @@ export function CustomerChat() {
             </div>
           </div>
           {status && <StatusBar status={status} />}
+          {historyOpen && (
+            <div className="mt-3 max-h-[50dvh] overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1.5">
+              <HistoryList items={historyItems} activeId={inquiryId} onOpen={openInquiry} more={history.hasMore ? { loading: history.loading, onMore: history.loadMore } : null} />
+            </div>
+          )}
         </header>
         <div className="hidden items-center gap-4 border-b border-zinc-100 px-8 py-4 md:flex">
           <div className="min-w-0">
-            <p className="text-[15px] font-semibold text-zinc-900">{inquiryId ? "상담 중" : "새 문의"}</p>
+            <p className="text-[15px] font-semibold text-zinc-900">{!inquiryId ? "새 문의" : closed ? "지난 상담" : "상담 중"}</p>
             <p className="text-[12.5px] text-zinc-500">{inquiryId ? `문의 번호 ${inquiryId}` : "궁금한 점을 남기면 담당자가 확인 후 답변드려요"}</p>
           </div>
           {status && (
@@ -532,6 +582,9 @@ function SidePanel({
   status,
   inquiryId,
   email,
+  history,
+  historyMore,
+  onOpenInquiry,
   onNewChat,
   onLogout,
 }: {
@@ -539,6 +592,9 @@ function SidePanel({
   status: BackendStatus | null;
   inquiryId: string | null;
   email?: string;
+  history: CustomerInquirySummary[];
+  historyMore: HistoryMore;
+  onOpenInquiry: (id: string) => void;
   onNewChat: () => void;
   onLogout: () => void;
 }) {
@@ -592,6 +648,13 @@ function SidePanel({
           {inquiryId && <p className="mt-4 font-mono text-[11.5px] text-zinc-400">문의 번호 {inquiryId}</p>}
         </section>
 
+        {history.length > 0 && (
+          <section>
+            <p className="mb-2 text-[12px] font-semibold text-zinc-500">지난 상담</p>
+            <HistoryList items={history} activeId={inquiryId} onOpen={onOpenInquiry} more={historyMore} />
+          </section>
+        )}
+
         <section className="rounded-xl bg-zinc-50 px-4 py-3.5 text-[12.5px] leading-relaxed text-zinc-600">
           <p className="mb-1.5 font-semibold text-zinc-700">이렇게 남겨주시면 빨라요</p>
           <ul className="list-disc space-y-1 pl-4">
@@ -620,6 +683,45 @@ function SidePanel({
         </a>
       </div>
     </aside>
+  );
+}
+
+type HistoryMore = { loading: boolean; onMore: () => void } | null;
+
+/** 이 계정으로 남긴 상담 목록 (최근 접수순, 서버 기준) */
+function HistoryList({ items, activeId, onOpen, more }: { items: CustomerInquirySummary[]; activeId: string | null; onOpen: (id: string) => void; more: HistoryMore }) {
+  return (
+    <ul className="space-y-0.5">
+      {items.map((h) => {
+        const active = h.inquiry_id === activeId;
+        return (
+          <li key={h.inquiry_id}>
+            <button
+              onClick={() => onOpen(h.inquiry_id)}
+              aria-current={active ? "true" : undefined}
+              className={cn("flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition", active ? "bg-indigo-50" : "hover:bg-zinc-100")}
+            >
+              <MessageSquare className={cn("mt-0.5 size-3.5 shrink-0", active ? "text-indigo-600" : "text-zinc-400")} />
+              <span className="min-w-0 flex-1">
+                <span className={cn("block truncate text-[13px]", active ? "font-semibold text-indigo-900" : "text-zinc-800")}>{h.title || `문의 ${h.inquiry_id}`}</span>
+                <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-zinc-400">
+                  <span className="font-mono">{h.inquiry_id}</span>
+                  <span>· {formatDateTime(h.created_at)}</span>
+                  {h.status && <span className={cn(h.status === "상담 종료" ? "text-zinc-400" : h.status === "답변 완료" ? "text-indigo-600" : "text-amber-600")}>· {h.status}</span>}
+                </span>
+              </span>
+            </button>
+          </li>
+        );
+      })}
+      {more && (
+        <li>
+          <button onClick={more.onMore} disabled={more.loading} className="w-full rounded-lg px-2.5 py-2 text-center text-[12px] text-zinc-500 hover:bg-zinc-100 disabled:opacity-60">
+            {more.loading ? "불러오는 중…" : "이전 상담 더 보기"}
+          </button>
+        </li>
+      )}
+    </ul>
   );
 }
 

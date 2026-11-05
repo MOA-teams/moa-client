@@ -3,10 +3,12 @@
 import "@/lib/browser-mock"; // 데모 데이터는 브라우저 안에서 처리
 
 import {
+  AlertCircle,
   Bell,
   BookText,
   Bug,
   GitCommitHorizontal,
+  ShieldAlert,
   Inbox,
   LogOut,
   MessageCircle,
@@ -22,11 +24,12 @@ import { usePathname, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { adminApi, demoApi } from "@moa/shared/api";
 import { adminInquiryApi } from "@moa/shared/inquiry";
+import { alertApi, alertHref, type LiveAlert, type LiveAlertType } from "@moa/shared/alerts";
+import { groupApi } from "@moa/shared/groups";
 import { usePolling } from "@moa/shared/hooks";
 import { CLIENT_URL } from "@moa/shared/urls";
 import { ROLE_LABEL } from "@moa/shared/auth";
 import { useAuth } from "@moa/shared/auth-context";
-import type { Alert } from "@moa/shared/types";
 import { cn, timeAgo } from "@moa/shared/utils";
 import { Logo } from "@moa/ui";
 import { Toggle } from "@moa/ui";
@@ -40,30 +43,52 @@ const NAV = [
   { href: "/settings", label: "설정·보안", icon: SettingsIcon, key: "settings" },
 ] as const;
 
+/** 화면 표시용 알림 (백엔드 GET /api/v1/admin/alerts) */
+interface ShellAlert {
+  id: string;
+  type: LiveAlertType;
+  message: string;
+  href: string;
+  read: boolean;
+  createdAt: string;
+}
+
+const toShellAlert = (a: LiveAlert): ShellAlert => ({
+  id: a.alert_id,
+  type: a.type,
+  message: [a.message, a.inquiry_id ?? a.group_id].filter(Boolean).join(" · "),
+  href: alertHref(a),
+  read: !!a.read_at,
+  createdAt: a.created_at,
+});
+
 interface ShellData {
-  alerts: Alert[];
+  alerts: ShellAlert[];
   ragMode: "moa" | "naive";
   counts: Record<string, number>;
 }
 
 async function loadShell(): Promise<ShellData> {
   const [alerts, settings, live, reviews, answers, groups] = await Promise.all([
-    adminApi.alerts(),
+    // 실제 알림 (읽은 것 포함 최근 20개, 읽음은 담당자별)
+    alertApi.list({ unreadOnly: false, limit: 20 }).catch(() => null),
     adminApi.settings(),
     // 실제 문의 중 새로 접수된 건 (백엔드)
     adminInquiryApi.list({ status: "접수" }, null, 100).catch(() => null),
+    // 아래 두 개는 데모 화면(재검토·우수 답변) 배지용 — 백엔드 API 생기면 교체
     adminApi.reviews(),
     adminApi.answers(),
-    adminApi.groups(),
+    // 실제 문의 그룹 중 급증
+    groupApi.list().catch(() => null),
   ]);
   return {
-    alerts,
+    alerts: alerts?.items.map(toShellAlert) ?? [],
     ragMode: settings.ragMode,
     counts: {
       inbox: live?.items.length ?? 0,
       reviews: reviews.filter((r) => r.status === "pending").length,
       candidates: answers.filter((a) => a.tier === "candidate").length,
-      groups: groups.filter((g) => g.spike).length,
+      groups: groups?.items.filter((g) => g.surging).length ?? 0,
     },
   };
 }
@@ -73,7 +98,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const { user, tenant, logout } = useAuth();
   const { data, refresh } = usePolling(loadShell, 3000);
   const [bellOpen, setBellOpen] = useState(false);
-  const [toasts, setToasts] = useState<Alert[]>([]);
+  const [toasts, setToasts] = useState<ShellAlert[]>([]);
   const seen = useRef<Set<string> | null>(null);
 
   // 새 알림 → 토스트
@@ -83,7 +108,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       seen.current = new Set(data.alerts.map((a) => a.id));
       return;
     }
-    const fresh = data.alerts.filter((a) => !seen.current!.has(a.id));
+    const fresh = data.alerts.filter((a) => !seen.current!.has(a.id) && !a.read);
     fresh.forEach((a) => seen.current!.add(a.id));
     if (fresh.length) {
       setToasts((t) => [...fresh, ...t].slice(0, 4));
@@ -186,7 +211,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
               <button
                 onClick={() => {
                   setBellOpen((v) => !v);
-                  if (!bellOpen && unread) adminApi.readAlerts().then(refresh);
+                  if (!bellOpen && unread) {
+                    const ids = data!.alerts.filter((a) => !a.read).map((a) => a.id);
+                    Promise.allSettled(ids.map((id) => alertApi.read(id))).then(refresh);
+                  }
                 }}
                 className="relative grid size-9 place-items-center rounded-lg text-zinc-600 hover:bg-zinc-100"
                 aria-label="알림"
@@ -217,8 +245,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
                         >
                           <AlertIcon type={a.type} />
                           <div className="min-w-0">
-                            <p className="text-[13px] font-medium text-zinc-900">{a.title}</p>
-                            <p className="mt-0.5 text-[12px] text-zinc-500">{a.body}</p>
+                            <p className={cn("text-[13px] text-zinc-900", a.read ? "font-normal" : "font-semibold")}>{a.type}</p>
+                            <p className="mt-0.5 text-[12px] text-zinc-500">{a.message}</p>
                             <p className="mt-1 text-[11px] text-zinc-400">{timeAgo(a.createdAt)}</p>
                           </div>
                         </Link>
@@ -250,13 +278,13 @@ export function AdminShell({ children }: { children: ReactNode }) {
             href={t.href}
             className={cn(
               "pointer-events-auto flex animate-fade-up gap-3 rounded-xl border bg-white p-4 shadow-lg",
-              t.type === "spike" ? "border-red-200" : "border-zinc-200",
+              t.type === "문의 급증" ? "border-red-200" : "border-zinc-200",
             )}
           >
             <AlertIcon type={t.type} />
             <div className="min-w-0 flex-1">
-              <p className="text-[13.5px] font-semibold text-zinc-900">{t.title}</p>
-              <p className="mt-0.5 text-[12.5px] text-zinc-500">{t.body}</p>
+              <p className="text-[13.5px] font-semibold text-zinc-900">{t.type}</p>
+              <p className="mt-0.5 text-[12.5px] text-zinc-500">{t.message}</p>
             </div>
           </Link>
         ))}
@@ -265,13 +293,13 @@ export function AdminShell({ children }: { children: ReactNode }) {
   );
 }
 
-function AlertIcon({ type }: { type: Alert["type"] }) {
+function AlertIcon({ type }: { type: LiveAlertType }) {
   const map = {
-    spike: { icon: Siren, cls: "bg-red-50 text-red-600" },
-    issue: { icon: Bug, cls: "bg-violet-50 text-violet-600" },
-    push: { icon: GitCommitHorizontal, cls: "bg-sky-50 text-sky-600" },
-    review: { icon: RotateCcw, cls: "bg-amber-50 text-amber-600" },
-  }[type];
+    "문의 급증": { icon: Siren, cls: "bg-red-50 text-red-600" },
+    "GitHub 이슈 생성 실패": { icon: Bug, cls: "bg-violet-50 text-violet-600" },
+    "분석 실패": { icon: AlertCircle, cls: "bg-red-50 text-red-600" },
+    "검증 확인 필요": { icon: ShieldAlert, cls: "bg-amber-50 text-amber-600" },
+  }[type] ?? { icon: Bell, cls: "bg-zinc-100 text-zinc-600" };
   return (
     <span className={cn("grid size-8 shrink-0 place-items-center rounded-lg", map.cls)}>
       <map.icon className="size-4" />

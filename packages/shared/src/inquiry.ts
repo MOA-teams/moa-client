@@ -97,6 +97,20 @@ export interface InquiryChatResponse {
 
 /* ---------------------------------- 고객 ---------------------------------- */
 
+/** GET /api/v1/inquiries — 고객 본인 문의 목록 항목 */
+export interface CustomerInquirySummary {
+  inquiry_id: string;
+  title: string;
+  status: BackendStatus;
+  created_at: string;
+}
+
+export interface CustomerInquiryListResponse {
+  items: CustomerInquirySummary[];
+  next_cursor: string | null;
+  has_more: boolean;
+}
+
 export interface CreateInquiryBody {
   message: string;
   source_customer_id?: string;
@@ -168,6 +182,13 @@ const idem = (key: string) => ({ "Idempotency-Key": key });
 const enc = encodeURIComponent;
 
 export const inquiryApi = {
+  /** 본인 문의 목록 (최근 접수순, '새 상담'으로 떠난 과거 문의 포함). 새 문의 확인은 cursor 없이 첫 페이지 */
+  list: (cursor?: string | null, limit = 20) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (cursor) q.set("cursor", cursor);
+    return authed<CustomerInquiryListResponse>(`/api/v1/inquiries?${q}`);
+  },
+
   create: (body: CreateInquiryBody, key: string) =>
     withRetry(() => authed<CreateInquiryResponse>("/api/v1/inquiries", { method: "POST", body, headers: idem(key) })),
 

@@ -11,6 +11,7 @@ import type { SecurityLevel, Settings } from "@moa/shared/types";
 import { cn, formatDateTime } from "@moa/shared/utils";
 import { Badge, Button, Card, CardHeader, LoadingBlock, Notice, PageHeader, Toggle } from "@moa/ui";
 import { GitHubIntegrationCard } from "./github-integration";
+import { AutoResponseCard } from "./live-auto-response";
 
 const BASE_EXCLUDES = [".env*", "*.pem", "*.key", "secrets/", "config/prod*"];
 
@@ -71,6 +72,7 @@ export function SettingsView() {
 
       <div className="grid gap-5 xl:grid-cols-2">
         <GitHubIntegrationCard />
+        <AutoResponseCard />
         <p className="-mb-2 mt-3 text-[12.5px] font-semibold text-zinc-500 xl:col-span-2">데모 시나리오 설정 (합성 데이터 · push 시뮬레이션용)</p>
         {/* 보안 레벨 */}
         <Card className="xl:col-span-2">
