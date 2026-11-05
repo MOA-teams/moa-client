@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
 import { cn } from "@moa/shared/utils";
 
@@ -125,22 +125,23 @@ export function Select<T extends string>({
   className?: string;
   "aria-label"?: string;
 }) {
+  // 브라우저 기본 화살표 대신 아이콘을 직접 배치 (위치·간격 일정). 크기·여백 className은 바깥 래퍼에 적용
   return (
-    <select
-      aria-label={ariaLabel}
-      value={value}
-      onChange={(e) => onChange(e.target.value as T)}
-      className={cn(
-        "h-8 rounded-lg border border-zinc-200 bg-white pl-2.5 pr-7 text-[13px] text-zinc-800 outline-none focus:border-zinc-400",
-        className,
-      )}
-    >
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
+    <span className={cn("relative inline-flex h-8 min-w-0", className)}>
+      <select
+        aria-label={ariaLabel}
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+        className="h-full w-full min-w-0 cursor-pointer appearance-none truncate rounded-lg border border-zinc-200 bg-white pl-3 pr-8 text-[13px] text-zinc-800 outline-none transition hover:border-zinc-300 focus:border-zinc-400 focus:ring-4 focus:ring-zinc-100"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+    </span>
   );
 }
 
