@@ -13,15 +13,9 @@ import { DEFAULT_EXCLUDES, GH_INSTALL_KEY, GH_LEVEL_KEY } from "./github-integra
 type Err = { msg: string; rid?: string } | null;
 const toErr = (e: unknown): Err => ({ msg: inquiryErrorMessage(e), rid: e instanceof AuthApiError ? e.requestId : undefined });
 
-/** 경로 목록 → 선택용 디렉터리 (1~2단계) */
+/** selection API는 파일이 아닌 디렉터리 경로를 반환한다. 최상위 경로도 그대로 보존한다. */
 function dirsOf(paths: string[]) {
-  const set = new Set<string>();
-  for (const p of paths) {
-    const parts = p.split("/");
-    if (parts.length > 1) set.add(`${parts[0]}/`);
-    if (parts.length > 2) set.add(`${parts[0]}/${parts[1]}/`);
-  }
-  return [...set].sort();
+  return [...new Set(paths.filter(Boolean).map((path) => `${path.replace(/\/+$/, "")}/`))].sort();
 }
 
 /** 다시 연결 · App 설치 버튼 */
