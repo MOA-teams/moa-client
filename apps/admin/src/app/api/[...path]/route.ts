@@ -33,7 +33,11 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "inquiries" && b && !c) {
       const inq = S.getInquiry(b);
       if (url.searchParams.get("view") === "customer") return json(S.customerView(inq));
-      return json({ ...inq, group: S.listGroups().find((g) => g.id === inq.groupId) ?? null });
+      return json({
+        ...inq,
+        group: S.listGroups().find((g) => g.id === inq.groupId) ?? null,
+        sentAnswer: S.db().answers.find((x) => x.id === inq.sentAnswerId) ?? null,
+      });
     }
     if (a === "groups") return json(S.listGroups());
     if (a === "reviews") return json(S.listReviews());
@@ -43,6 +47,7 @@ export async function GET(req: Request, ctx: Ctx) {
     if (a === "settings") return json(S.getSettings());
     if (a === "system") return json(S.getSystemState());
     if (a === "alerts") return json(S.listAlerts());
+    if (a === "onboarding") return json(S.getOnboarding());
     if (a === "attachments" && b) {
       const f = S.getFile(b);
       if (!f) return json({ message: "없음" }, 404);
@@ -119,6 +124,14 @@ export async function POST(req: Request, ctx: Ctx) {
       S.markAlertsRead(p.ids);
       return json({ ok: true });
     }
+    if (a === "onboarding") {
+      const p = await body<Record<string, unknown>>(req);
+      if (b === "service") return json(S.saveServiceInfo(p as never));
+      if (b === "index") return json(S.runInitialIndex());
+      if (b === "import") return json(S.importPastAnswers((p.rows as never) ?? []));
+      if (b === "test") return json(S.testInquiry(String(p.text ?? "")));
+      if (b === "restart") return json(S.restartOnboarding());
+    }
     if (a === "demo") {
       if (b === "push") return json(S.simulatePricePush());
       if (b === "spike") {
@@ -144,6 +157,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     if (a === "inquiries" && b && !c) return json(S.updateClassification(b, p as never));
     if (a === "inquiries" && b && c === "draft") return json(S.saveDraft(b, String(p.text ?? "")));
     if (a === "settings") return json(S.updateSettings(p as never));
+    if (a === "onboarding") return json(S.patchOnboarding(p as never));
     if (a === "documents" && b) {
       if (p.status) return json(S.setDocumentStatus(b, p.status as never));
       if (typeof p.content === "string") return json(S.updateDocument(b, p.content));

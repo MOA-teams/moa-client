@@ -138,6 +138,8 @@ export interface Answer {
   inquiryId?: string;
   question: string;
   text: string;
+  /** A-06: 발송 시점의 AI 초안 원문 (수정 전) */
+  draftText?: string;
   evidence: Evidence[];
   rating: number | null;
   editRatio: number; // 초안 대비 수정량 0~1
@@ -145,6 +147,8 @@ export interface Answer {
   isStale: boolean;
   staleReason?: string;
   lowStreak: number;
+  /** 온보딩 CSV import — 별점 없음, 담당자 승인 필수 */
+  imported?: boolean;
   createdAt: string;
   approvedAt?: string;
 }
@@ -251,12 +255,55 @@ export interface Settings {
   watchPaths: string[];
   excludePatterns: string[];
   avgResponseMinutes: number;
-  service: {
-    name: string;
-    intro: string;
-    tone: string;
-    hours: string;
-  };
+  service: ServiceInfo;
+}
+
+export interface PricePlan {
+  name: string;
+  price: string;
+  features: string;
+}
+
+/** 온보딩 1단계 — 문서가 하나도 없어도 이 정보만으로 기본 초안이 가능해야 한다 */
+export interface ServiceInfo {
+  name: string;
+  intro: string;
+  tone: string;
+  hours: string;
+  plans: PricePlan[];
+  refundSummary: string;
+  features: string;
+}
+
+export interface IndexSummary {
+  level: SecurityLevel;
+  repo: string;
+  branch: string;
+  indexedFiles: string[];
+  chunks: number;
+  excluded: Array<{ path: string; reason: string }>;
+  masked: Array<{ path: string; line: number; kind: string }>;
+  outsideWatch: number;
+  at: string;
+}
+
+export type OnboardingStep = 1 | 2 | 3 | 4 | 5;
+
+export interface OnboardingState {
+  completed: boolean;
+  steps: Record<OnboardingStep, boolean>;
+  githubInstalled: boolean;
+  index: IndexSummary | null;
+  importedCount: number;
+  repoTree: string[];
+}
+
+export interface TestResult {
+  category: Category;
+  urgency: Urgency;
+  topic: string;
+  autoInfoRequest: boolean;
+  draft: Draft;
 }
 
 export interface AuditLog {

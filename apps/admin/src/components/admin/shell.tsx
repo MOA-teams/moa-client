@@ -8,6 +8,7 @@ import {
   Inbox,
   MessageCircle,
   RotateCcw,
+  Rocket,
   Settings as SettingsIcon,
   Siren,
   Star,
@@ -116,6 +117,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
           <SideNav counts={data?.counts} />
         </Suspense>
         <div className="space-y-1 border-t border-zinc-100 p-3">
+          <Link href="/onboarding" className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] text-zinc-600 hover:bg-zinc-100">
+            <Rocket className="size-4" /> 초기 세팅
+          </Link>
           <a href={`${CLIENT_URL}/chat`} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] text-zinc-600 hover:bg-zinc-100">
             <MessageCircle className="size-4" /> 고객 채팅 열기
           </a>

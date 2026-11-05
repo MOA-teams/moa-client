@@ -19,6 +19,10 @@ import type {
   InquiryStatus,
   KDocument,
   Message,
+  IndexSummary,
+  OnboardingState,
+  ServiceInfo,
+  TestResult,
   PushEvent,
   Rating,
   ReviewItem,
@@ -100,6 +104,8 @@ export interface GroupView extends Group {
 
 export interface InquiryDetail extends Inquiry {
   group: GroupView | null;
+  /** 발송된 답변 (A-06 수정 전후 비교용) */
+  sentAnswer: Answer | null;
 }
 
 export interface ReviewView extends ReviewItem {
@@ -157,6 +163,20 @@ export const adminApi = {
 
   alerts: () => request<Alert[]>("/alerts"),
   readAlerts: (ids?: string[]) => request<{ ok: true }>("/alerts/read", { method: "POST", json: { ids } }),
+};
+
+/* -------------------------------- 온보딩 -------------------------------- */
+
+export const onboardingApi = {
+  get: () => request<OnboardingState>("/onboarding"),
+  patch: (patch: { completed?: boolean; githubInstalled?: boolean; step?: number; done?: boolean }) =>
+    request<OnboardingState>("/onboarding", { method: "PATCH", json: patch }),
+  restart: () => request<OnboardingState>("/onboarding/restart", { method: "POST" }),
+  saveService: (info: ServiceInfo) => request<Settings>("/onboarding/service", { method: "POST", json: info }),
+  index: () => request<IndexSummary>("/onboarding/index", { method: "POST" }),
+  importAnswers: (rows: Array<{ question: string; answer: string }>) =>
+    request<{ imported: number }>("/onboarding/import", { method: "POST", json: { rows } }),
+  test: (text: string) => request<TestResult>("/onboarding/test", { method: "POST", json: { text } }),
 };
 
 /** 데모 전용 (발표 시나리오 트리거) */

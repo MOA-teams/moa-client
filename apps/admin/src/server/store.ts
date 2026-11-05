@@ -14,8 +14,12 @@ import type {
   Environment,
   GithubIssue,
   Group,
+  IndexSummary,
   Inquiry,
   KDocument,
+  OnboardingState,
+  ServiceInfo,
+  TestResult,
   Message,
   PushEvent,
   ReviewItem,
@@ -38,7 +42,7 @@ import {
   type DraftContext,
   type Topic,
 } from "./ai";
-import { ago, seedAnswers, seedCommits, seedDocuments, seedSettings } from "./seed";
+import { REPO_TREE, SECRET_LINES, ago, seedAnswers, seedCommits, seedDocuments, seedSettings } from "./seed";
 
 interface StoredFile {
   buf: Buffer;
@@ -62,6 +66,7 @@ interface DB {
   codeIndexed: boolean;
   files: Map<string, StoredFile>;
   seq: { inquiry: number; answer: number; issue: number; misc: number };
+  onboarding: OnboardingState;
 }
 
 const g = globalThis as unknown as { __moaDB?: DB };
@@ -132,7 +137,17 @@ function createDB(): DB {
     codeIndexed: true,
     files: new Map(),
     seq: { inquiry: 100, answer: 50, issue: 127, misc: 0 },
+    onboarding: {
+      completed: true,
+      steps: { 1: true, 2: true, 3: true, 4: false, 5: true },
+      githubInstalled: true,
+      index: null,
+      importedCount: 0,
+      repoTree: REPO_TREE,
+    },
   };
+  // 데모는 서비스 정보·문서 v1·GitHub 레포가 이미 연결된 상태에서 시작 (명세 4장)
+  d.onboarding.index = buildIndex(d);
 
   // 환불 정책 v3 갱신으로 A012 재검토 대기 (문서 재업로드 → 버전 비교)
   d.reviews.push({
@@ -446,6 +461,7 @@ function sendAnswerIn(d: DB, id: string, text: string, at = nowIso()) {
     inquiryId: inq.id,
     question: customerText(inq).slice(0, 80),
     text: body,
+    draftText: draft?.originalText ?? "",
     evidence,
     rating: null,
     editRatio: editRatio(draft?.originalText ?? "", body),
@@ -911,7 +927,7 @@ export function decideCandidate(id: string, action: "approve" | "reject") {
   if (!a) throw new StoreError("답변을 찾을 수 없습니다", 404);
   if (action === "approve") {
     if (a.tier !== "candidate") throw new StoreError("후보 상태인 답변만 승인할 수 있습니다");
-    if (a.evidence.length === 0) throw new StoreError("근거 목록이 없는 답변은 등록할 수 없습니다");
+    if (a.evidence.length === 0 && !a.imported) throw new StoreError("근거 목록이 없는 답변은 등록할 수 없습니다");
     a.tier = "best";
     a.approvedAt = nowIso();
     audit(d, "담당자", "우수 답변 승인 · Vector DB 등록", a.id);
@@ -1011,4 +1027,144 @@ export function spikeStep(step: number) {
   const item = SPIKE_SCRIPT[step];
   if (!item) throw new StoreError("시나리오 끝", 400);
   return createInquiry({ customerName: item.name, customerCategory: step % 3 === 0 ? "other" : "bug", text: item.text, environment: item.env, attachments: [] });
+}
+
+/* -------------------------------------------------------------------------- */
+/*                              온보딩 (명세 4-0)                                */
+/* -------------------------------------------------------------------------- */
+
+export function getOnboarding() {
+  return db().onboarding;
+}
+
+export function patchOnboarding(patch: Partial<Pick<OnboardingState, "completed" | "githubInstalled">> & { step?: number; done?: boolean }) {
+  const o = db().onboarding;
+  if (patch.completed !== undefined) o.completed = patch.completed;
+  if (patch.githubInstalled !== undefined) o.githubInstalled = patch.githubInstalled;
+  if (patch.step && patch.step >= 1 && patch.step <= 5) o.steps[patch.step as 1] = patch.done ?? true;
+  return o;
+}
+
+/** 흐름 재연용: 데이터는 유지하고 온보딩 진행 상태만 초기화 */
+export function restartOnboarding() {
+  const o = db().onboarding;
+  o.completed = false;
+  o.steps = { 1: false, 2: false, 3: false, 4: false, 5: false };
+  o.githubInstalled = false;
+  o.index = null;
+  o.importedCount = 0;
+  return o;
+}
+
+/** 1단계: 서비스 기본 정보 → 설정 저장 + '서비스 기본 정보' 문서로 등록 (문서 없이도 기본 초안 가능) */
+export function saveServiceInfo(info: ServiceInfo) {
+  const d = db();
+  if (!info.name?.trim()) throw new StoreError("서비스명을 입력하세요");
+  d.settings.service = info;
+  const content = [
+    `# ${info.name} 서비스 기본 정보`,
+    `- 소개: ${info.intro}`,
+    `## 요금제`,
+    ...info.plans.filter((p) => p.name.trim()).map((p) => `- ${p.name}: ${p.price} (${p.features})`),
+    `## 환불 정책 요약`,
+    info.refundSummary,
+    `## 주요 기능`,
+    info.features,
+    `## 운영 시간`,
+    info.hours,
+  ].join("\n");
+  uploadDocument({ title: "서비스 기본 정보", type: "policy", content });
+  d.onboarding.steps[1] = true;
+  return d.settings;
+}
+
+function buildIndex(d: DB): IndexSummary {
+  const s = d.settings;
+  const excluded: IndexSummary["excluded"] = [];
+  const indexed: string[] = [];
+  let outside = 0;
+  for (const f of d.onboarding.repoTree) {
+    const ex = matchExclude(f, s.excludePatterns);
+    if (ex) {
+      excluded.push({ path: f, reason: `제외 패턴 ${ex}` });
+      continue;
+    }
+    if (!s.watchPaths.some((w) => f.startsWith(w))) {
+      outside++;
+      continue;
+    }
+    indexed.push(f);
+  }
+  // S-06 시크릿 스캔: 레벨 2만 코드 본문을 읽으므로 해당
+  const masked = s.securityLevel >= 2 ? SECRET_LINES.filter((x) => indexed.includes(x.path)) : [];
+  return {
+    level: s.securityLevel,
+    repo: s.repo,
+    branch: s.branch,
+    indexedFiles: s.securityLevel === 0 ? [] : indexed,
+    chunks: s.securityLevel >= 2 ? indexed.length : 0, // 파일 단위 청크로 시작 (미결 사항 권장)
+    excluded: s.securityLevel === 0 ? [] : excluded,
+    masked,
+    outsideWatch: outside,
+    at: nowIso(),
+  };
+}
+
+/** 3단계: 최초 인덱싱 */
+export function runInitialIndex() {
+  const d = db();
+  const level = d.settings.securityLevel;
+  if (level >= 1 && !d.onboarding.githubInstalled) throw new StoreError("GitHub App을 먼저 설치하세요");
+  const summary = buildIndex(d);
+  d.onboarding.index = summary;
+  d.codeIndexed = level >= 2;
+  d.onboarding.steps[3] = true;
+  audit(d, "시스템", level === 0 ? "GitHub 연동 안 함 (레벨 0)" : `최초 인덱싱 · 파일 ${summary.indexedFiles.length}개 · 제외 ${summary.excluded.length}개 · 마스킹 ${summary.masked.length}줄`, d.settings.repo);
+  return summary;
+}
+
+/** 4단계: 과거 문의/답변 CSV → 우수 답변 후보 (별점 없음 → 담당자 승인 필수) */
+export function importPastAnswers(rows: Array<{ question: string; answer: string }>) {
+  const d = db();
+  const valid = rows.filter((r) => r.question?.trim() && r.answer?.trim());
+  if (!valid.length) throw new StoreError("가져올 문의/답변 쌍이 없습니다");
+  for (const r of valid) {
+    d.answers.push({
+      id: `A${String(++d.seq.answer).padStart(3, "0")}`,
+      question: r.question.trim().slice(0, 120),
+      text: r.answer.trim(),
+      evidence: [],
+      rating: null,
+      editRatio: 0,
+      tier: "candidate",
+      isStale: false,
+      lowStreak: 0,
+      imported: true,
+      createdAt: nowIso(),
+    });
+  }
+  d.onboarding.importedCount += valid.length;
+  d.onboarding.steps[4] = true;
+  return { imported: valid.length };
+}
+
+/** 5단계: 테스트 문의 — 저장하지 않고 분류·초안만 미리보기 */
+export function testInquiry(text: string): TestResult {
+  const d = db();
+  if (!text.trim()) throw new StoreError("문의 내용을 입력하세요");
+  const env: Environment = { errorCode: detectErrorCode(text) };
+  const c = classify(text, env);
+  const temp = {
+    id: "TEST",
+    messages: [{ id: "t", role: "customer", kind: "text", text, createdAt: nowIso() }],
+    environment: env,
+  } as unknown as Inquiry;
+  d.onboarding.steps[5] = true;
+  return {
+    category: c.category,
+    urgency: c.urgency,
+    topic: TOPIC_TITLE[c.topic],
+    autoInfoRequest: isVague(text, env, false),
+    draft: generateDraft(temp, draftCtx(d)),
+  };
 }

@@ -125,6 +125,7 @@ function AnswerCard({ a, onChange }: { a: Answer; onChange: () => void }) {
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="font-mono text-[12px] text-zinc-400">{a.id}</span>
             <Badge className={TIER_TONE[a.tier]}>{TIER_LABEL[a.tier]}</Badge>
+            {a.imported && <Badge className="bg-zinc-100 text-zinc-600">CSV import · 별점 없음 · 승인 필요</Badge>}
             {a.isStale && (
               <Badge className="bg-amber-50 text-amber-700 ring-amber-600/20">
                 <AlertTriangle className="size-3" /> 재검토 중 · 사실 근거 제외

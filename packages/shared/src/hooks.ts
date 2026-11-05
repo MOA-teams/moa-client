@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** 3초 폴링 (명세 4-5: 해커톤은 3초 폴링 또는 SSE) */
-export function usePolling<T>(fetcher: () => Promise<T>, intervalMs = 3000, enabled = true) {
+export function usePolling<T>(
+  fetcher: () => Promise<T>,
+  intervalMs = 3000,
+  enabled = true,
+  /** 탭이 숨겨져도 계속 폴링 (고객 채팅 답변 알림용) */
+  opts: { whenHidden?: boolean } = {},
+) {
+  const whenHidden = !!opts.whenHidden;
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fetcherRef = useRef(fetcher);
@@ -27,7 +34,7 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs = 3000, enab
     if (!enabled) return;
     let alive = true;
     const tick = async () => {
-      if (!alive || document.visibilityState === "hidden") return;
+      if (!alive || (!whenHidden && document.visibilityState === "hidden")) return;
       await refresh();
     };
     tick();
@@ -36,7 +43,7 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs = 3000, enab
       alive = false;
       clearInterval(t);
     };
-  }, [refresh, intervalMs, enabled]);
+  }, [refresh, intervalMs, enabled, whenHidden]);
 
   return { data, error, loading: data === null && !error, refresh, setData };
 }

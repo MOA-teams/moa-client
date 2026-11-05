@@ -42,8 +42,8 @@ import {
   URGENCY_LABEL,
   URGENCY_TONE,
 } from "@moa/shared/labels";
-import type { Category, Message, Source, Urgency } from "@moa/shared/types";
-import { cn, formatBytes, formatDateTime, formatTime, pct } from "@moa/shared/utils";
+import type { Answer, Category, Message, Source, Urgency } from "@moa/shared/types";
+import { cn, diffWords, formatBytes, formatDateTime, formatTime, pct } from "@moa/shared/utils";
 import { Badge, Button, Card, CardHeader, LoadingBlock, Notice, Select, Stars } from "@moa/ui";
 
 export function InquiryDetailView({ params }: { params: Promise<{ id: string }> }) {
@@ -460,12 +460,15 @@ function DraftCard({ inquiry, onChange }: { inquiry: InquiryDetail; onChange: ()
         )}
 
         {answered || closed ? (
-          <div className="rounded-lg bg-zinc-50 px-4 py-3 text-[13px] text-zinc-600">
-            <Check className="mr-1 inline size-4 text-emerald-600" />
-            답변을 발송했어요.{" "}
-            {answered && "고객 확인 후 상담을 종료하면 별점 조사가 자동으로 발송돼요."}
-            {closed && "상담이 종료되었어요."}
-          </div>
+          <>
+            <div className="rounded-lg bg-emerald-50/70 px-4 py-3 text-[13px] text-emerald-900">
+              <Check className="mr-1 inline size-4 text-emerald-600" />
+              답변을 발송했어요.{" "}
+              {answered && "고객 확인 후 상담을 종료하면 별점 조사가 자동으로 발송돼요."}
+              {closed && "상담이 종료되었어요."}
+            </div>
+            {inquiry.sentAnswer && <SentAnswer answer={inquiry.sentAnswer} />}
+          </>
         ) : (
           <>
             <div className="relative">
@@ -639,5 +642,71 @@ function RatingCard({ inquiry }: { inquiry: InquiryDetail }) {
         ) : null}
       </div>
     </Card>
+  );
+}
+
+/* ------------------------------ A-06 수정 전후 ------------------------------ */
+
+function SentAnswer({ answer }: { answer: Answer }) {
+  const [view, setView] = useState<"diff" | "after" | "before">("diff");
+  const before = answer.draftText ?? "";
+  const diff = useMemo(() => diffWords(before, answer.text), [before, answer.text]);
+  const unchanged = before === answer.text;
+  const noDraft = !before;
+
+  return (
+    <div className="rounded-lg border border-zinc-200">
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-4 py-2.5">
+        <p className="text-[12.5px] font-semibold text-zinc-700">
+          발송한 답변 <span className="font-mono font-normal text-zinc-400">{answer.id}</span>
+        </p>
+        <Badge className={noDraft ? "bg-zinc-100 text-zinc-600" : unchanged ? "bg-emerald-50 text-emerald-700 ring-emerald-600/15" : "bg-indigo-50 text-indigo-700 ring-indigo-600/15"}>
+          {noDraft ? "직접 작성 (초안 없음)" : unchanged ? "초안 그대로 발송" : `초안 대비 수정량 ${pct(answer.editRatio)}`}
+        </Badge>
+        {!noDraft && !unchanged && (
+          <div className="ml-auto flex rounded-md bg-zinc-100 p-0.5 text-[12px]">
+            {(
+              [
+                ["diff", "변경 비교"],
+                ["before", "AI 초안"],
+                ["after", "발송본"],
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => setView(k)}
+                className={cn("rounded px-2 py-1 transition", view === k ? "bg-white font-medium text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="whitespace-pre-line px-4 py-3 text-[13.5px] leading-relaxed text-zinc-800">
+        {noDraft || unchanged || view === "after"
+          ? answer.text
+          : view === "before"
+            ? before
+            : diff.map((p, i) => (
+                <span
+                  key={i}
+                  className={cn(
+                    p.type === "add" && "rounded bg-emerald-100 text-emerald-900",
+                    p.type === "del" && "rounded bg-red-100 text-red-700 line-through",
+                  )}
+                >
+                  {p.text}
+                </span>
+              ))}
+      </p>
+      {!noDraft && !unchanged && view === "diff" && (
+        <p className="border-t border-zinc-100 px-4 py-2 text-[11.5px] text-zinc-500">
+          <span className="mr-2 rounded bg-red-100 px-1 text-red-700 line-through">삭제</span>
+          <span className="rounded bg-emerald-100 px-1 text-emerald-900">추가</span>
+          <span className="ml-2">수정량은 별점 4점 답변의 우수 답변 후보 조건(설정 기준, 기본 30% 미만)에 쓰여요</span>
+        </p>
+      )}
+    </div>
   );
 }

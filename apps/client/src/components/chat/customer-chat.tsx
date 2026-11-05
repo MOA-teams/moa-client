@@ -12,9 +12,10 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, customerApi, type CustomerInquiry } from "@moa/shared/api";
 import { usePolling } from "@moa/shared/hooks";
+import { NotifyPrompt, useAnswerNotifier } from "./answer-notifier";
 import { ADMIN_URL } from "@moa/shared/urls";
 import { CATEGORIES, CATEGORY_LABEL, STATUS_LABEL } from "@moa/shared/labels";
 import type { Attachment, Category, Environment, InquiryStatus, Message } from "@moa/shared/types";
@@ -102,10 +103,12 @@ export function CustomerChat() {
     () => (inquiryId ? customerApi.get(inquiryId) : Promise.resolve(null)),
     3000,
     ready && !!inquiryId,
+    { whenHidden: true },
   );
 
   const lastCount = useRef(0);
-  const messages = inquiry?.messages ?? [];
+  const messages = useMemo(() => inquiry?.messages ?? [], [inquiry]);
+  useAnswerNotifier(inquiryId, messages);
   useEffect(() => {
     if (messages.length !== lastCount.current) {
       lastCount.current = messages.length;
@@ -217,6 +220,7 @@ export function CustomerChat() {
           </div>
           {status && <StatusBar status={status} />}
         </header>
+        <NotifyPrompt show={!!inquiryId && status !== "closed"} />
 
         {/* 메시지 */}
         <div ref={scrollRef} className="scrollbar-thin flex-1 space-y-3 overflow-y-auto bg-zinc-50/50 px-4 py-5">

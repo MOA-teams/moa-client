@@ -30,6 +30,13 @@ export function seedSettings(): Settings {
       intro: "어디서나 끊김 없이 동기화되는 팀 노트 앱",
       tone: "친절하고 간결하게, 해결 단계는 번호로 안내",
       hours: "평일 10:00 ~ 19:00",
+      plans: [
+        { name: "Free", price: "0원", features: "노트 100개, 기기 2대" },
+        { name: "Pro", price: "월 9,900원 (연간 월 7,900원)", features: "노트·기기 무제한, 버전 기록 30일" },
+        { name: "Team", price: "인당 월 14,900원", features: "Pro 기능 + 공유 워크스페이스, 관리자 콘솔" },
+      ],
+      refundSummary: "결제일로부터 7일 이내, 유료 기능 사용 이력이 없으면 전액 환불",
+      features: "실시간 동기화, 오프라인 모드(베타), 공유 링크 권한, Markdown·PDF 내보내기",
     },
   };
 }
@@ -317,3 +324,33 @@ export function seedAnswers(): Answer[] {
 
   return list;
 }
+
+/** 데모 레포 파일 트리 — 제외 패턴·시크릿 스캔 시연용 파일 포함 (명세 9장 B) */
+export const REPO_TREE: string[] = [
+  "billing/pricing.ts",
+  "billing/plans.ts",
+  "billing/refund.ts",
+  "billing/legacyGateway.ts",
+  "sync/saveHandler.ts",
+  "sync/queue.ts",
+  "sync/conflictResolver.ts",
+  "upload/attachment.ts",
+  "auth/session.ts",
+  "auth/oauth.ts",
+  "api/client.ts",
+  "web/pages/index.tsx",
+  "web/components/Editor.tsx",
+  "scripts/seed.ts",
+  ".env.example",
+  "config/prod.pricing.ts",
+  "secrets/stripe.key",
+  "certs/server.pem",
+  "README.md",
+];
+
+/** 시크릿 스캔에 걸리는 가짜 키 (데모용) */
+export const SECRET_LINES: Array<{ path: string; line: number; kind: string }> = [
+  { path: "billing/legacyGateway.ts", line: 12, kind: "결제 API 키 (sk_live_…)" },
+  { path: "auth/oauth.ts", line: 8, kind: "OAuth client secret" },
+  { path: "scripts/seed.ts", line: 3, kind: "DB 비밀번호" },
+];
