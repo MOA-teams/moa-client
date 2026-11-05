@@ -238,10 +238,24 @@ export function CustomerChat() {
   const uploading = files.some((f) => !f.att && !f.error);
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-[radial-gradient(ellipse_at_top,#eef2ff,transparent_60%)] p-0 sm:p-6">
-      <div className="flex h-dvh w-full max-w-[440px] flex-col overflow-hidden bg-white sm:h-[min(780px,calc(100dvh-48px))] sm:rounded-3xl sm:border sm:border-zinc-200 sm:shadow-xl sm:shadow-zinc-900/5">
+    <div className="flex min-h-dvh items-center justify-center bg-[radial-gradient(ellipse_at_top,#eef2ff,transparent_60%)] p-0 sm:p-6 md:block md:bg-zinc-50 md:p-0">
+      <div className="flex h-dvh w-full max-w-[440px] overflow-hidden bg-white sm:h-[min(780px,calc(100dvh-48px))] sm:rounded-3xl sm:border sm:border-zinc-200 sm:shadow-xl sm:shadow-zinc-900/5 md:h-dvh md:max-w-none md:rounded-none md:border-0 md:shadow-none">
+        {/* 데스크톱 사이드 패널 */}
+        <SidePanel
+          entry={entry}
+          status={status}
+          inquiryId={inquiryId}
+          email={user?.email}
+          onNewChat={newChat}
+          onLogout={() => {
+            logout();
+            router.replace(loginHref("/login", "/chat"));
+          }}
+        />
+
+        <div className="flex min-w-0 flex-1 flex-col">
         {/* 헤더 */}
-        <header className="border-b border-zinc-100 px-5 pb-3 pt-4">
+        <header className="border-b border-zinc-100 px-5 pb-3 pt-4 md:hidden">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <Avatar size="md" />
@@ -271,11 +285,29 @@ export function CustomerChat() {
           </div>
           {status && <StatusBar status={status} />}
         </header>
-        <NotifyPrompt show={!!inquiryId && !closed} />
+        <div className="hidden items-center gap-4 border-b border-zinc-100 px-8 py-4 md:flex">
+          <div className="min-w-0">
+            <p className="text-[15px] font-semibold text-zinc-900">{inquiryId ? "상담 중" : "새 문의"}</p>
+            <p className="text-[12.5px] text-zinc-500">{inquiryId ? `문의 번호 ${inquiryId}` : "궁금한 점을 남기면 담당자가 확인 후 답변드려요"}</p>
+          </div>
+          {status && (
+            <div className="ml-auto w-[420px]">
+              <StatusBar status={status} />
+            </div>
+          )}
+        </div>
+        <div className="md:mx-auto md:w-full md:max-w-3xl">
+          <NotifyPrompt show={!!inquiryId && !closed} />
+        </div>
 
         {/* 메시지 */}
-        <div ref={scrollRef} className="scrollbar-thin flex-1 space-y-3 overflow-y-auto bg-zinc-50/50 px-4 py-5">
-          {entry.hasEntry && <EntryCard entry={entry} />}
+        <div ref={scrollRef} className="scrollbar-thin flex-1 overflow-y-auto bg-zinc-50/50 px-4 py-5 md:px-8 md:py-8">
+          <div className="space-y-3 md:mx-auto md:max-w-3xl md:space-y-4">
+          {entry.hasEntry && (
+            <div className="md:hidden">
+              <EntryCard entry={entry} />
+            </div>
+          )}
 
           <BotBubble>
             안녕하세요, {SERVICE}입니다 👋
@@ -314,10 +346,12 @@ export function CustomerChat() {
             <FeedbackCard inquiryId={inquiryId} submitted={!!chat.latest.feedback_submitted} feedback={chat.latest.feedback ?? null} onDone={chat.poke} />
           )}
           {closed && <p className="py-2 text-center text-[12px] text-zinc-400">상담이 종료되었어요. 새 메시지를 보내면 새 문의로 접수됩니다.</p>}
+          </div>
         </div>
 
         {/* 입력 */}
-        <div className="border-t border-zinc-100 bg-white px-3 pb-3 pt-2">
+        <div className="border-t border-zinc-100 bg-white px-3 pb-3 pt-2 md:px-8 md:pb-5 md:pt-3">
+          <div className="md:mx-auto md:max-w-3xl">
           {notice && (
             <div className="mb-2 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
               <AlertTriangle className="mt-px size-3.5 shrink-0" />
@@ -347,7 +381,7 @@ export function CustomerChat() {
               >
                 <Monitor className="size-3.5" />
                 <span className="truncate">
-                  {[env.os, env.app_version && `v${env.app_version}`, env.error_code].filter(Boolean).join(" · ") || "발생 환경"}
+                  {[env.os, env.app_version && `앱 ${env.app_version}`, env.error_code].filter(Boolean).join(" · ") || "발생 환경"}
                   {entry.hasEntry ? " · 앱에서 전달" : " · 자동 수집"}
                 </span>
                 <ChevronDown className={cn("ml-auto size-3.5 transition", envOpen && "rotate-180")} />
@@ -434,12 +468,14 @@ export function CustomerChat() {
               <ArrowUp className="size-[18px]" />
             </button>
           </div>
-          <p className="mt-2 text-center text-[11px] text-zinc-400">
+          <p className="mt-2 text-center text-[11px] text-zinc-400 md:hidden">
             데모 화면 ·{" "}
             <a href={ADMIN_URL} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
               담당자 어드민 열기
             </a>
           </p>
+          </div>
+        </div>
         </div>
       </div>
     </div>
@@ -447,6 +483,110 @@ export function CustomerChat() {
 }
 
 /* --------------------------------- 하위 컴포넌트 --------------------------------- */
+
+const SIDE_STEPS: Array<{ key: BackendStatus; desc: string }> = [
+  { key: "접수", desc: "문의가 접수됐어요" },
+  { key: "담당자 확인 중", desc: "담당자가 내용을 확인하고 있어요" },
+  { key: "답변 완료", desc: "답변을 확인해 주세요" },
+  { key: "상담 종료", desc: "상담이 마무리됐어요" },
+];
+
+/** 데스크톱·태블릿(md 768px 이상) 왼쪽 패널 — 고객센터 정보·진행 상태·진입 정보·계정 */
+function SidePanel({
+  entry,
+  status,
+  inquiryId,
+  email,
+  onNewChat,
+  onLogout,
+}: {
+  entry: EntryInfo;
+  status: BackendStatus | null;
+  inquiryId: string | null;
+  email?: string;
+  onNewChat: () => void;
+  onLogout: () => void;
+}) {
+  const needs = status === "추가 정보 필요";
+  const idx = !status ? -1 : needs ? 1 : SIDE_STEPS.findIndex((s) => s.key === status);
+  return (
+    <aside className="hidden w-[340px] shrink-0 flex-col border-r border-zinc-200/80 bg-white md:flex">
+      <div className="flex items-center gap-3 px-7 pb-6 pt-7">
+        <Avatar size="md" />
+        <div>
+          <p className="text-[16px] font-semibold text-zinc-900">{SERVICE} 고객센터</p>
+          <p className="text-[12.5px] text-zinc-500">평일 10:00 ~ 19:00</p>
+        </div>
+      </div>
+
+      <div className="scrollbar-thin flex-1 space-y-6 overflow-y-auto px-7 pb-6">
+        {entry.hasEntry && <EntryCard entry={entry} />}
+
+        <section>
+          <p className="mb-3 text-[12px] font-semibold text-zinc-500">상담 진행</p>
+          {status ? (
+            <ol className="relative space-y-4">
+              {SIDE_STEPS.map((s, i) => {
+                const active = i === idx;
+                const done = i < idx;
+                return (
+                  <li key={s.key} className="relative flex gap-3">
+                    {i < SIDE_STEPS.length - 1 && <span className={cn("absolute left-[9px] top-6 h-[calc(100%-4px)] w-px", done ? "bg-indigo-600" : "bg-zinc-200")} />}
+                    <span
+                      className={cn(
+                        "relative z-10 mt-0.5 grid size-[19px] shrink-0 place-items-center rounded-full border-2",
+                        done ? "border-indigo-600 bg-indigo-600" : active ? (needs ? "border-amber-500 bg-white" : "border-indigo-600 bg-white") : "border-zinc-200 bg-white",
+                      )}
+                    >
+                      {done && <span className="size-1.5 rounded-full bg-white" />}
+                      {active && <span className={cn("size-2 rounded-full", needs ? "bg-amber-500" : "bg-indigo-600")} />}
+                    </span>
+                    <div>
+                      <p className={cn("text-[13.5px]", active ? (needs ? "font-semibold text-amber-700" : "font-semibold text-zinc-900") : done ? "text-zinc-700" : "text-zinc-400")}>
+                        {needs && i === 1 ? "추가 정보 필요" : s.key}
+                      </p>
+                      {active && <p className="mt-0.5 text-[12px] text-zinc-500">{needs ? "요청한 정보를 채팅으로 보내주세요" : s.desc}</p>}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <p className="text-[13px] leading-relaxed text-zinc-500">메시지를 보내면 바로 접수되고, 진행 상황이 여기에 표시돼요.</p>
+          )}
+          {inquiryId && <p className="mt-4 font-mono text-[11.5px] text-zinc-400">문의 번호 {inquiryId}</p>}
+        </section>
+
+        <section className="rounded-xl bg-zinc-50 px-4 py-3.5 text-[12.5px] leading-relaxed text-zinc-600">
+          <p className="mb-1.5 font-semibold text-zinc-700">이렇게 남겨주시면 빨라요</p>
+          <ul className="list-disc space-y-1 pl-4">
+            <li>오류 코드나 화면 캡처를 함께 보내주세요</li>
+            <li>캡처에 개인정보가 보이면 가려주세요</li>
+            <li>창을 닫아도 대화는 그대로 남아요</li>
+          </ul>
+        </section>
+      </div>
+
+      <div className="space-y-1 border-t border-zinc-100 px-4 py-3">
+        {inquiryId && (
+          <button onClick={onNewChat} className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] text-zinc-600 hover:bg-zinc-100">
+            <RotateCcw className="size-4" /> 새 상담 시작
+          </button>
+        )}
+        <div className="flex items-center gap-2.5 rounded-lg px-3 py-2">
+          <span className="grid size-7 shrink-0 place-items-center rounded-full bg-zinc-100 text-[12px] font-semibold uppercase text-zinc-600">{email?.[0] ?? "?"}</span>
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-zinc-600">{email}</span>
+          <button onClick={onLogout} className="grid size-7 place-items-center rounded-md text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700" aria-label="로그아웃" title="로그아웃">
+            <LogOut className="size-4" />
+          </button>
+        </div>
+        <a href={ADMIN_URL} target="_blank" rel="noreferrer" className="block px-3 pt-1 text-[11.5px] text-zinc-400 hover:text-zinc-600">
+          데모 화면 · 담당자 어드민 열기
+        </a>
+      </div>
+    </aside>
+  );
+}
 
 const STEPS: BackendStatus[] = ["접수", "담당자 확인 중", "답변 완료", "상담 종료"];
 
